@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentTrace — Viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-2: #f3f3ef;
+  --border: rgba(0,0,0,0.09);
+  --border-strong: rgba(0,0,0,0.16);
+  --text: #1a1a1a;
+  --text-2: #555;
+  --text-3: #999;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', monospace;
+  --danger: #c0392b;
+  --danger-bg: rgba(192,57,43,0.06);
+  --danger-border: rgba(192,57,43,0.2);
+  --warn: #e67e22;
+  --warn-bg: rgba(230,126,34,0.06);
+  --info: #2980b9;
+  --radius: 6px;
+}
+@media(prefers-color-scheme:dark) {
+  :root {
+    --bg: #0e0e12;
+    --surface: #16161c;
+    --surface-2: #1c1c24;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.14);
+    --text: #ddd;
+    --text-2: #999;
+    --text-3: #555;
+    --danger: #e74c3c;
+    --danger-bg: rgba(231,76,60,0.08);
+    --danger-border: rgba(231,76,60,0.25);
+    --warn: #f39c12;
+    --warn-bg: rgba(243,156,18,0.08);
+    --info: #5dade2;
+  }
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:var(--sans); background:var(--bg); color:var(--text); font-size:14px; }
+
+.app { display:grid; grid-template-rows:auto auto 1fr; grid-template-columns:1fr 280px; min-height:100vh; }
+.header { grid-column:1/-1; padding:16px 24px 12px; border-bottom:1px solid var(--border);
+           display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+.header h1 { font-size:20px; font-weight:600; }
+.tag { font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:var(--radius);
+       background:var(--surface-2); color:var(--text-2); }
+.legend { display:flex; gap:12px; margin-left:auto; font-size:12px; color:var(--text-2);
+          align-items:center; flex-wrap:wrap; }
+.legend-item { display:inline-flex; align-items:center; gap:4px; }
+.legend-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+
+.toolbar { grid-column:1/-1; padding:8px 24px; display:flex; align-items:center; gap:12px;
+           border-bottom:1px solid var(--border); }
+.view-toggle { display:flex; gap:0; }
+.vbtn { font-family:var(--sans); font-size:12px; padding:5px 14px; border:1px solid var(--border-strong);
+        background:var(--surface); color:var(--text-2); cursor:pointer; transition:all .15s; }
+.vbtn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
+.vbtn:last-child { border-radius:0 var(--radius) var(--radius) 0; }
+.vbtn.active { background:var(--info); color:#fff; border-color:var(--info); }
+.load-btn { font-family:var(--sans); font-size:12px; padding:5px 14px; border:1px solid var(--border-strong);
+            background:var(--surface); color:var(--text-2); border-radius:var(--radius); cursor:pointer; }
+.load-btn:hover { background:var(--surface-2); }
+.toolbar .hint { font-size:11px; color:var(--text-3); margin-left:auto; }
+
+.main { padding:16px 24px; overflow-x:auto; overflow-y:auto; }
+.sidebar { border-left:1px solid var(--border); padding:16px; overflow-y:auto; }
+
+.sidebar h3 { font-size:11px; font-weight:500; color:var(--text-3); margin:0 0 8px;
+              text-transform:uppercase; letter-spacing:0.8px; font-family:var(--mono); }
+.sidebar-section { margin-bottom:22px; }
+
+.belief-card { padding:10px 12px; border-radius:var(--radius); margin-bottom:6px;
+               border:1px solid var(--border); background:var(--surface); }
+.belief-label { font-family:var(--mono); font-size:10px; text-transform:uppercase;
+                letter-spacing:0.8px; margin-bottom:3px; }
+.belief-text { font-size:12px; color:var(--text-2); line-height:1.45; }
+.diverge-marker { text-align:center; font-family:var(--mono); font-size:11px; padding:4px 0;
+                  color:var(--danger); }
+
+.failure-row { display:flex; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);
+               align-items:flex-start; }
+.failure-code { font-family:var(--mono); font-size:10px; padding:1px 5px; border-radius:3px;
+                background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger-border);
+                white-space:nowrap; }
+.failure-label { font-size:11.5px; color:var(--text); }
+.failure-cat { font-size:10px; color:var(--text-3); }
+
+.meta-block { font-family:var(--mono); font-size:11px; line-height:1.9; color:var(--text-2);
+              background:var(--surface-2); border-radius:var(--radius); padding:10px 12px; }
+.meta-key { color:var(--info); }
+
+/* SWIMLANE HEADERS */
+.swim-headers { display:flex; padding-left:44px; border-bottom:1px solid var(--border);
+                margin-bottom:4px; position:sticky; top:0; background:var(--bg); z-index:10; }
+.swim-col { text-align:center; font-family:var(--mono); font-size:10px; padding:6px 0; }
+.swim-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-bottom:2px; }
+
+/* PHASE DIVIDER */
+.phase-div { display:flex; align-items:center; gap:8px; padding:8px 0 4px; }
+.phase-div .pline { flex:1; height:1px; background:var(--border); }
+.phase-div .plabel { font-family:var(--mono); font-size:10px; color:var(--text-3);
+                     letter-spacing:1px; text-transform:uppercase; white-space:nowrap; }
+
+/* COMPACT ROW */
+.crow { display:flex; align-items:center; min-height:30px; cursor:pointer;
+        border-radius:var(--radius); padding:1px 0; }
+.crow:hover { background:var(--surface-2); }
+.crow.in-loop { background:var(--danger-bg); border-left:2.5px solid var(--danger); }
+.crow .cnum { width:40px; text-align:right; font-family:var(--mono); font-size:10px;
+              color:var(--text-3); padding-right:6px; flex-shrink:0; }
+.crow .cbars { display:flex; flex:1; }
+.ccell { display:flex; align-items:center; justify-content:center; }
+.cbar { height:22px; border-radius:3px; min-width:16px; display:flex; align-items:center;
+        justify-content:center; padding:0 6px; cursor:pointer; transition:transform .1s; }
+.cbar:hover { transform:scaleY(1.15); }
+.cbar span { font-size:9.5px; color:var(--text-2); font-family:var(--mono); white-space:nowrap;
+             overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+.cbadge { width:6px; height:6px; border-radius:50%; background:var(--danger); margin-left:3px;
+          flex-shrink:0; }
+
+/* DETAIL ROW */
+.drow { padding:10px 10px 10px 44px; margin-bottom:2px; border-radius:var(--radius);
+        cursor:pointer; position:relative; }
+.drow:hover { background:var(--surface-2); }
+.drow.in-loop { border-left:2.5px solid var(--danger); background:var(--danger-bg); }
+.drow .dnum { position:absolute; left:8px; top:12px; font-family:var(--mono); font-size:10px;
+              color:var(--text-3); width:30px; text-align:right; }
+.dagent { font-family:var(--mono); font-size:11px; font-weight:500; padding:1px 7px;
+          border-radius:4px; display:inline-block; margin-bottom:4px; }
+.dcontent { font-size:12.5px; line-height:1.55; color:var(--text-2); max-height:60px;
+            overflow:hidden; position:relative; }
+.dcontent.expanded { max-height:none; }
+.dbadge { font-family:var(--mono); font-size:9.5px; padding:1px 6px; border-radius:3px;
+          display:inline-block; margin-top:4px; margin-right:3px; }
+.dbadge.fail { background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger-border); }
+.dbadge.diverge { background:var(--warn-bg); color:var(--warn); border:1px solid rgba(230,126,34,0.2); }
+
+/* DRILL PANEL */
+.drill { background:var(--surface); border:1px solid var(--border-strong); border-radius:8px;
+         padding:16px; margin:8px 0 8px 44px; display:none; }
+.drill.open { display:block; }
+.drill .full { font-size:13px; line-height:1.6; color:var(--text); white-space:pre-wrap;
+               max-height:400px; overflow-y:auto; }
+.drill .dmeta { font-family:var(--mono); font-size:11px; color:var(--text-3); margin-top:10px; }
+.drill .close-btn { font-family:var(--sans); font-size:11px; padding:3px 10px; border:1px solid var(--border);
+                    background:var(--surface); border-radius:var(--radius); cursor:pointer; color:var(--text-2); }
+
+#file-input { display:none; }
+.empty-state { padding:60px 20px; text-align:center; color:var(--text-3); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1>AgentTrace</h1>
+    <span class="tag" id="hdr-tag">no trace loaded</span>
+    <div class="legend" id="hdr-legend"></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="view-toggle">
+      <button class="vbtn active" id="btn-compact" onclick="setView('compact')">Compact</button>
+      <button class="vbtn" id="btn-detail" onclick="setView('detail')">Detailed</button>
+    </div>
+    <label class="load-btn" for="file-input">Load processed JSON</label>
+    <input type="file" id="file-input" accept=".json" onchange="loadFile(event)">
+    <button class="load-btn" onclick="loadSample()">Load sample (AG2)</button>
+    <span class="hint" id="toolbar-hint">Run: python process_trace.py trace.json</span>
+  </div>
+
+  <div class="main" id="main">
+    <div class="empty-state" id="empty">
+      <p style="font-size:16px;margin-bottom:8px;">No trace loaded</p>
+      <p style="font-size:13px;">Click "Load processed JSON" or "Load sample" to start.</p>
+    </div>
+  </div>
+
+  <div class="sidebar" id="sidebar"></div>
+</div>
+
+<script>
+const AGENT_COLORS = ["#2980b9","#27ae60","#8e44ad","#d35400","#c0392b","#16a085","#2c3e50","#e67e22"];
+let DATA = null;
+let VIEW = "compact";
+let DRILL_IDX = -1;
+
+function agentColor(agent, agents) {
+  if (agent === "Conclusion") return "#888";
+  const i = agents.indexOf(agent);
+  return AGENT_COLORS[i % AGENT_COLORS.length];
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function setView(v) {
+  VIEW = v;
+  document.getElementById("btn-compact").className = "vbtn" + (v==="compact"?" active":"");
+  document.getElementById("btn-detail").className = "vbtn" + (v==="detail"?" active":"");
+  render();
+}
+
+function loadFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try { DATA = JSON.parse(ev.target.result); render(); }
+    catch { alert("Could not parse JSON"); }
+  };
+  reader.readAsText(file);
+}
+
+function loadSample() { DATA = SAMPLE; render(); }
+
+function inLoop(idx) {
+  if (!DATA) return false;
+  return DATA.loops.some(l => idx >= l.start && idx <= l.end);
+}
+
+function toggleDrill(idx) {
+  DRILL_IDX = DRILL_IDX === idx ? -1 : idx;
+  render();
+}
+
+// ─── RENDER ───
+function render() {
+  if (!DATA) return;
+  const {meta, agents, failures, turns, loops, beliefs} = DATA;
+
+  // Header
+  document.getElementById("hdr-tag").textContent =
+    `${meta.framework} · ${meta.benchmark}` + (meta.llm!=="unknown" ? ` · ${meta.llm}` : "");
+  let legHTML = "";
+  agents.forEach(a => {
+    const c = agentColor(a, agents);
+    legHTML += `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${esc(a)}</span>`;
+  });
+  if (Object.keys(failures).length)
+    legHTML += `<span class="legend-item"><span class="legend-dot" style="background:var(--danger)"></span>${Object.keys(failures).length} failure(s)</span>`;
+  legHTML += `<span style="color:var(--text-3)">${meta.total_turns} turns</span>`;
+  document.getElementById("hdr-legend").innerHTML = legHTML;
+  document.getElementById("toolbar-hint").textContent =
+    meta.problem_statement ? meta.problem_statement.slice(0, 80) + (meta.problem_statement.length > 80 ? "…" : "") : "";
+
+  // Sidebar
+  renderSidebar(agents, failures, loops, beliefs, meta);
+
+  // Main
+  document.getElementById("empty").style.display = "none";
+  const mainEl = document.getElementById("main");
+  const display = agents.filter(a => a !== "System");
+  const colW = Math.max(100, Math.min(180, (mainEl.clientWidth - 80) / Math.max(display.length, 1)));
+
+  if (VIEW === "compact") renderCompact(mainEl, turns, display, colW, loops);
+  else renderDetail(mainEl, turns, display, colW, loops);
+}
+
+function renderCompact(container, turns, agents, colW, loops) {
+  let html = "";
+
+  // Sticky column headers
+  html += `<div class="swim-headers">`;
+  agents.forEach(a => {
+    const c = agentColor(a, agents);
+    html += `<div class="swim-col" style="width:${colW}px;">
+      <div class="swim-dot" style="background:${c}"></div>
+      <div style="color:${c};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;">
+      ${esc(a)}</div></div>`;
+  });
+  html += `</div>`;
+
+  let curPhase = "";
+  turns.forEach((t, i) => {
+    if (t.agent === "System") return;
+
+    if (t.phase && t.phase !== curPhase) {
+      curPhase = t.phase;
+      html += `<div class="phase-div"><div class="pline"></div><span class="plabel">${esc(curPhase)}</span><div class="pline"></div></div>`;
+    }
+
+    const ci = agents.indexOf(t.agent);
+    if (ci < 0) return;
+    const c = agentColor(t.agent, agents);
+    const il = inLoop(i);
+    const hasAnn = t.annotations && t.annotations.length > 0;
+
+    html += `<div class="crow${il?" in-loop":""}" onclick="toggleDrill(${i})">`;
+    html += `<span class="cnum">${i + 1}</span>`;
+    html += `<div class="cbars">`;
+
+    agents.forEach((a, ai) => {
+      html += `<div class="ccell" style="width:${colW}px;">`;
+      if (ai === ci) {
+        const r = parseInt(c.slice(1,3),16), g = parseInt(c.slice(3,5),16), b = parseInt(c.slice(5,7),16);
+        const barW = Math.min(colW - 10, Math.max(40, t.short.length * 6 + 16));
+        html += `<div class="cbar" style="width:${barW}px;background:rgba(${r},${g},${b},0.1);
+                  border:1px solid rgba(${r},${g},${b},0.22);">
+                  <span>${esc(t.short)}</span></div>`;
+        if (hasAnn) html += `<span class="cbadge"></span>`;
+      }
+      html += `</div>`;
+    });
+
+    html += `</div></div>`;
+
+    // Drill panel
+    if (DRILL_IDX === i) {
+      html += renderDrillPanel(t, agents);
+    }
+  });
+
+  container.innerHTML = html;
+}
+
+function renderDetail(container, turns, agents, colW, loops) {
+  let html = "";
+  let curPhase = "";
+
+  turns.forEach((t, i) => {
+    if (t.agent === "System") return;
+
+    if (t.phase && t.phase !== curPhase) {
+      curPhase = t.phase;
+      html += `<div class="phase-div"><div class="pline"></div><span class="plabel">${esc(curPhase)}</span><div class="pline"></div></div>`;
+    }
+
+    const c = agentColor(t.agent, agents);
+    const r = parseInt(c.slice(1,3),16), g = parseInt(c.slice(3,5),16), b = parseInt(c.slice(5,7),16);
+    const il = inLoop(i);
+
+    html += `<div class="drow${il?" in-loop":""}" onclick="toggleDrill(${i})">`;
+    html += `<span class="dnum">${i + 1}</span>`;
+    html += `<div>`;
+    html += `<span class="dagent" style="background:rgba(${r},${g},${b},0.1);color:${c};">${esc(t.agent)}</span>`;
+
+    const preview = t.content.length > 220 ? t.content.slice(0, 220) + "…" : t.content;
+    html += `<div class="dcontent">${esc(preview)}</div>`;
+
+    if (t.annotations) {
+      t.annotations.forEach(a => {
+        if (a.type === "failure") {
+          const reg = DATA.failure_registry[a.code] || {};
+          html += `<span class="dbadge fail">FM-${esc(a.code)} ${esc(reg.label || "")}</span>`;
+        } else {
+          html += `<span class="dbadge diverge">${a.code === "divergence" ? "⚡ divergence" : "↻ re-explains"}</span>`;
+        }
+      });
+    }
+
+    html += `</div></div>`;
+
+    if (DRILL_IDX === i) {
+      html += renderDrillPanel(t, agents);
+    }
+  });
+
+  container.innerHTML = html;
+}
+
+function renderDrillPanel(t, agents) {
+  const c = agentColor(t.agent, agents);
+  return `<div class="drill open">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <span class="dagent" style="background:rgba(${parseInt(c.slice(1,3),16)},${parseInt(c.slice(3,5),16)},${parseInt(c.slice(5,7),16)},0.1);color:${c};">${esc(t.agent)}</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text-3);">
+        turn ${t.index + 1}${t.phase ? " · " + t.phase : ""}</span>
+      <button class="close-btn" onclick="event.stopPropagation();toggleDrill(${t.index})" style="margin-left:auto;">close</button>
+    </div>
+    <div class="full">${esc(t.content)}</div>
+    <div class="dmeta">phase: ${esc(t.phase || "n/a")} · role: ${esc(t.role)}
+      ${t.annotations.length ? " · annotations: " + t.annotations.map(a=>a.code).join(", ") : ""}</div>
+  </div>`;
+}
+
+// ─── SIDEBAR ───
+function renderSidebar(agents, failures, loops, beliefs, meta) {
+  let html = "";
+
+  // Beliefs
+  if (beliefs.has_divergence) {
+    html += `<div class="sidebar-section"><h3>Belief divergence</h3>`;
+    const entries = Object.entries(beliefs.beliefs);
+    entries.forEach(([agent, belief], i) => {
+      const c = agentColor(agent, agents);
+      const r = parseInt(c.slice(1,3),16), g = parseInt(c.slice(3,5),16), b = parseInt(c.slice(5,7),16);
+      html += `<div class="belief-card" style="border-color:rgba(${r},${g},${b},0.2);
+                background:rgba(${r},${g},${b},0.04);">
+        <div class="belief-label" style="color:${c};">${esc(agent)}</div>
+        <div class="belief-text">"${esc(belief)}"</div>
+      </div>`;
+      if (i === 0 && entries.length > 1) html += `<div class="diverge-marker">⚡ beliefs diverge</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Failures
+  const fkeys = Object.keys(failures);
+  if (fkeys.length) {
+    html += `<div class="sidebar-section"><h3>Detected failures</h3>`;
+    fkeys.forEach(code => {
+      const info = failures[code];
+      const reg = DATA.failure_registry[code] || {};
+      const turnCount = DATA.turns.filter(t => t.annotations.some(a => a.code === code)).length;
+      html += `<div class="failure-row">
+        <span class="failure-code">${code}</span>
+        <div><div class="failure-label">${esc(reg.label || info.label || code)}</div>
+        <div class="failure-cat">${esc(reg.category || info.category || "")}${turnCount ? " · " + turnCount + " turn(s)" : " · trace-level"}</div></div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Loops
+  if (loops.length) {
+    html += `<div class="sidebar-section"><h3>Loops</h3>`;
+    loops.forEach(l => {
+      html += `<div style="font-family:var(--mono);font-size:11px;color:var(--text-2);
+                padding:5px 8px;border-radius:var(--radius);margin-bottom:4px;
+                background:var(--danger-bg);border:1px solid var(--danger-border);">
+                Turns ${l.start+1}–${l.end+1}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Metadata
+  const cor = meta.task_correct === true ? "correct" : meta.task_correct === false ? "incorrect" : "unknown";
+  html += `<div class="sidebar-section"><h3>Metadata</h3>
+    <div class="meta-block">
+      <span class="meta-key">framework</span>: ${esc(meta.framework)}<br>
+      <span class="meta-key">benchmark</span>: ${esc(meta.benchmark)}<br>
+      <span class="meta-key">llm</span>: ${esc(meta.llm)}<br>
+      <span class="meta-key">turns</span>: ${meta.total_turns}<br>
+      <span class="meta-key">outcome</span>: ${cor}<br>
+      <span class="meta-key">failures</span>: [${fkeys.map(c=>'"'+c+'"').join(", ")}]
+    </div></div>`;
+
+  // Note
+  if (meta.note_text) {
+    html += `<div class="sidebar-section"><h3>Expert note</h3>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.5;padding:10px;
+           background:var(--surface-2);border-radius:var(--radius);font-style:italic;">
+           ${esc(meta.note_text)}</div></div>`;
+  }
+
+  document.getElementById("sidebar").innerHTML = html;
+}
+
+// ─── SAMPLE AG2 TRACE (pre-processed) ───
+const SAMPLE = {
+  "meta":{"framework":"AG2","benchmark":"critical thinking","llm":"unknown",
+    "task_correct":true,"total_turns":10,
+    "problem_statement":"Monica is wrapping Christmas gifts. She has 6 gifts for family, 4 for friends, 2 for teachers. How many inches of ribbon per bow?",
+    "note_text":"The mathproxyagent keeps asking to continue despite the problem being unsolvable."},
+  "agents":["mathproxyagent","assistant"],
+  "failures":{"1.5":{"label":"Unaware of stopping conditions","category":"FC1: System Design"},
+              "2.5":{"label":"Ignored other agent's input","category":"FC2: Inter-Agent Misalignment"}},
+  "failure_registry":{
+    "1.1":{"label":"Disobey task specification","category":"FC1: System Design"},
+    "1.2":{"label":"Disobey role specification","category":"FC1: System Design"},
+    "1.3":{"label":"Step repetition","category":"FC1: System Design"},
+    "1.4":{"label":"Loss of conversation history","category":"FC1: System Design"},
+    "1.5":{"label":"Unaware of stopping conditions","category":"FC1: System Design"},
+    "2.1":{"label":"Conversation reset","category":"FC2: Inter-Agent Misalignment"},
+    "2.2":{"label":"Fail to ask for clarification","category":"FC2: Inter-Agent Misalignment"},
+    "2.3":{"label":"Task derailment","category":"FC2: Inter-Agent Misalignment"},
+    "2.4":{"label":"Information withholding","category":"FC2: Inter-Agent Misalignment"},
+    "2.5":{"label":"Ignored other agent's input","category":"FC2: Inter-Agent Misalignment"},
+    "2.6":{"label":"Reasoning-action mismatch","category":"FC2: Inter-Agent Misalignment"},
+    "3.1":{"label":"Premature termination","category":"FC3: Task Verification"},
+    "3.2":{"label":"No or incomplete verification","category":"FC3: Task Verification"},
+    "3.3":{"label":"Incorrect verification","category":"FC3: Task Verification"}},
+  "turns":[
+    {"index":0,"agent":"mathproxyagent","role":"assistant","content":"Let's use Python to solve a math problem.\n\nProblem: Monica has 6 gifts for family, 4 for friends, 2 for teachers. How many inches of ribbon per bow?","phase":"","short":"setup problem","annotations":[]},
+    {"index":1,"agent":"assistant","role":"user","content":"This problem cannot be solved with the information provided. No ribbon amount is specified.","phase":"","short":"insufficient data","annotations":[]},
+    {"index":2,"agent":"mathproxyagent","role":"assistant","content":"Continue. Please keep solving the problem until you need to query. (If you get to the answer, put it in \\boxed{}.)","phase":"","short":"continue","annotations":[{"code":"1.5","type":"failure","detail":"Repeated 4x"},{"code":"2.5","type":"failure","detail":"Ignores other agent"},{"code":"divergence","type":"divergence","detail":"Ignores assistant's assertion"}]},
+    {"index":3,"agent":"assistant","role":"user","content":"I don't have enough information. I need:\n1. Total ribbon length?\n2. Inches per bow?\nWithout this, unsolvable.","phase":"","short":"re-explains","annotations":[{"code":"re-explain","type":"divergence","detail":"assistant re-explains"}]},
+    {"index":4,"agent":"mathproxyagent","role":"assistant","content":"Continue. Please keep solving the problem until you need to query. (If you get to the answer, put it in \\boxed{}.)","phase":"","short":"continue","annotations":[{"code":"1.5","type":"failure","detail":"Repeated 4x"},{"code":"2.5","type":"failure","detail":"Ignores other agent"},{"code":"divergence","type":"divergence","detail":"Ignores assistant's assertion"}]},
+    {"index":5,"agent":"assistant","role":"user","content":"I really need more information. It can't be solved with current data.","phase":"","short":"re-explains","annotations":[{"code":"re-explain","type":"divergence","detail":"assistant re-explains"}]},
+    {"index":6,"agent":"mathproxyagent","role":"assistant","content":"Continue. Please keep solving the problem until you need to query. (If you get to the answer, put it in \\boxed{}.)","phase":"","short":"continue","annotations":[{"code":"1.5","type":"failure","detail":"Repeated 4x"},{"code":"2.5","type":"failure","detail":"Ignores other agent"},{"code":"divergence","type":"divergence","detail":"Ignores assistant's assertion"}]},
+    {"index":7,"agent":"assistant","role":"user","content":"We cannot solve this — crucial data is missing. Any attempt would be assumptions, not facts.","phase":"","short":"re-explains","annotations":[{"code":"re-explain","type":"divergence","detail":"assistant re-explains"}]},
+    {"index":8,"agent":"mathproxyagent","role":"assistant","content":"Continue. Please keep solving the problem until you need to query. (If you get to the answer, put it in \\boxed{}.)","phase":"","short":"continue","annotations":[{"code":"1.5","type":"failure","detail":"Repeated 4x"},{"code":"2.5","type":"failure","detail":"Ignores other agent"},{"code":"divergence","type":"divergence","detail":"Ignores assistant's assertion"}]},
+    {"index":9,"agent":"assistant","role":"user","content":"The problem cannot be solved. \\boxed{\"Data insufficient\"}.","phase":"","short":"final answer","annotations":[]}
+  ],
+  "loops":[{"start":2,"end":9}],
+  "beliefs":{"beliefs":{"mathproxyagent":"Task should continue - answer must be produced","assistant":"Task is blocked - critical information missing"},"has_divergence":true}
+};
+
+// Auto-load sample on start
+window.addEventListener("DOMContentLoaded", () => loadSample());
+</script>
+</body>
+</html>
