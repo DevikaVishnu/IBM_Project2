@@ -170,8 +170,3 @@ Load `enriched.json` into the visualiser using the **↑ Load JSON** button.
 - Epperson, W. et al. (2025). *Interactive Debugging and Steering of Multi-Agent AI Systems.* CHI 2025. arXiv:2503.02068.
 - Wu, Q. et al. (2024). *AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversations.* COLM 2024.
 
----
-
-## Disclaimer
-
-Reasoning states are inferred from observable conversational behaviour using rule-based extraction. They do not necessarily reflect the latent internal states of language models. AgentTrace provides an interpretable behavioural approximation, not formal belief inference.
