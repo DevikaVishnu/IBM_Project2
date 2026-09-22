@@ -34,7 +34,6 @@ Interactive visualization with:
 ## How to Run
 
 ```bash
-cd v3_graph
 npm run dev
 ```
 
