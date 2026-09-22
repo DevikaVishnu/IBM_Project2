@@ -62,6 +62,21 @@ NOTE_LABEL_TO_CODE = {
     "Blurring roles": "1.2",
 }
 
+# Well-known ChatDev system prompt fragments
+_SYSTEM_PROMPT_FRAGMENTS = [
+    "ChatDev is a software company powered by multiple intelligent agents",
+    "Here is a new customer's task:",
+    "do not use any external libraries",
+    "Note that we must ONLY discuss",
+    "followed by our final",
+    "Please note that the code should be fully functional",
+    "You report to the CEO and collaborate",
+    "with a multi-agent organizational structure",
+    "changing the digital world through programming",
+    "According to the new user's task and our software designs listed below",
+    "Our developed source codes and samples are listed below",
+]
+
 
 # ─────────────────────────────────────────────
 # PARSERS
@@ -89,7 +104,6 @@ def parse_ag2_trajectory(trajectory: list) -> list:
 def _summarize(text: str, max_len: int = 30) -> str:
     """Create a short summary label for compact view."""
     t = text.strip()
-    # Check for known patterns
     if re.match(r"^continue\b", t, re.I):
         return "continue"
     if "<INFO>" in t:
@@ -103,7 +117,6 @@ def _summarize(text: str, max_len: int = 30) -> str:
         return "writes code"
     if re.match(r"^(I'm sorry|I really need|Based on the current)", t, re.I):
         return "re-explains"
-    # Generic: first meaningful words
     words = re.sub(r"[*#\[\]`]", "", t).split()[:5]
     s = " ".join(words)
     return s[:max_len] if s else "..."
@@ -121,48 +134,51 @@ def parse_chatdev_log(text: str) -> list:
     for block in blocks:
         body = block.group(2).strip()
 
-        # Skip noise lines
         if any(body.startswith(s) for s in ("flask app", "HTTP Request", "**[OpenAI_Usage")):
             continue
 
-        # Phase marker: System: **[chatting]** or **[RolePlaying]**
         phase_match = re.match(r'System:\s*\*\*\[(\w+)\]\*\*', body)
         if phase_match:
             current_phase = phase_match.group(1)
             continue
 
-        # Skip other System messages
         if body.startswith("System:"):
             continue
 
-        # Seminar conclusion
         conclusion_match = re.match(r'\*\*\[Seminar Conclusion\]\*\*:?\s*\n?(.*)', body, re.DOTALL)
         if conclusion_match:
             content = conclusion_match.group(1).strip()
             if content and len(content) > 3:
+                content = _extract_useful_content(content)
                 short = _summarize(content)
                 turns.append({
                     "index": idx, "agent": "Conclusion", "role": "conclusion",
-                    "content": content[:800],
-                    "content_hash": re.sub(r"\s+", " ", content.lower()[:800]),
+                    "content": content,
+                    "content_hash": re.sub(r"\s+", " ", content.lower().strip()),
                     "phase": current_phase, "short": short,
                 })
                 idx += 1
             continue
 
-        # Agent message: "AgentName: **header**\ncontent"
         agent_match = re.match(r'([\w\s]+?):\s*\*\*(.*?)\*\*\s*\n?(.*)', body, re.DOTALL)
         if agent_match:
             agent = agent_match.group(1).strip()
             header = agent_match.group(2).strip()
             raw_content = agent_match.group(3).strip()
 
-            # Extract phase from header
+            # [Start Chat] turns are framework scaffolding — the content is a
+            # system prompt template, not an actual agent response. Skip them.
+            if header == "[Start Chat]" or header.startswith("[Start Chat"):
+                # But still extract phase if present in the prompt
+                phase_in_prompt = re.search(r'phase_name.*?:\s*(\w+)', raw_content)
+                if phase_in_prompt:
+                    current_phase = phase_in_prompt.group(1)
+                continue
+
             conv_match = re.search(r'on\s*:\s*(\w+)', header)
             if conv_match:
                 current_phase = conv_match.group(1)
 
-            # Get useful content
             content = _extract_useful_content(raw_content)
             if not content or len(content) < 3:
                 content = header
@@ -180,33 +196,129 @@ def parse_chatdev_log(text: str) -> list:
 
 
 def _extract_useful_content(raw: str) -> str:
-    """Extract actual agent response, skipping echoed system prompts."""
-    if len(raw) < 400:
-        return raw.strip()
+    """
+    Extract actual agent response, skipping echoed system prompts.
+    
+    Strategy (FIXED ORDER):
+      1. Short content → return as-is
+      2. Strip bracket-delimited system prompt [...]  ← do this FIRST
+      3. Then check for <INFO> in the CLEANED text
+      4. Fallback: return full text
+    """
+    raw = raw.strip()
 
-    markers = [
-        "Here is a new customer's task:",
-        "do not use any",
-        "followed by our final",
-        "Note that we must ONLY",
-        "Please note that the code should be fully functional",
-        "<INFO>",
+    # Short content is almost never a prompt echo
+    if len(raw) < 300:
+        return raw
+
+    # FIRST: try to strip the system prompt
+    # This must happen before <INFO> check because the system prompt
+    # contains <INFO> as an example instruction (e.g., '<INFO> PowerPoint')
+    stripped = _strip_system_prompt(raw)
+    if stripped and stripped != raw and len(stripped) > 10:
+        # Successfully stripped — now check for <INFO> in the CLEAN text
+        if "<INFO>" in stripped:
+            info_pos = stripped.index("<INFO>")
+            before = stripped[:info_pos].strip()
+            after = stripped[info_pos:].strip()
+            if before and len(before) > 10:
+                return before + "\n" + after
+            return after
+        return stripped
+
+    # If stripping didn't help, check for <INFO> in the raw text
+    # but only if the <INFO> appears to be in agent text, not system prompt
+    if "<INFO>" in raw:
+        info_pos = raw.index("<INFO>")
+        # Only use this if <INFO> is not inside a system prompt bracket
+        before_info = raw[:info_pos]
+        if "[ChatDev" not in before_info and "e.g." not in before_info[-100:]:
+            after_info = raw[info_pos:].strip()
+            return after_info
+
+    # Fallback: return the raw text
+    return raw
+
+
+def _strip_system_prompt(text: str) -> str:
+    """
+    Find where the system prompt ends and the agent's actual response begins.
+    
+    ChatDev wraps system prompts in [...] brackets. Check these FIRST because
+    they're the most reliable delimiter. Terminators are a fallback for content
+    where brackets aren't present.
+    """
+    if not text:
+        return text
+
+    # ── 1. Bracket-delimited system prompt [...]  (most reliable) ──
+    # ChatDev always wraps the system prompt in [...], starting with [ChatDev...
+    stripped = text.lstrip()
+    if stripped.startswith("["):
+        bracket_end = -1
+        depth = 0
+        for i, ch in enumerate(stripped):
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    bracket_end = i
+                    break
+
+        if bracket_end > 0 and bracket_end < len(stripped) - 10:
+            after = stripped[bracket_end + 1:].lstrip()
+            if len(after) > 5:
+                return after
+
+    # ── 2. Terminator patterns (fallback for non-bracket prompts) ──
+    terminators = [
+        r'e\.g\.\s*,?\s*"<INFO>.*?"\.?',
+        r'<MODALITY>.*?</MODALITY>',
+        r'without any other words.*?\.',
+        r'Do not output anything else\.',
+        r'any of us must actively terminate',
+        r'Now start to give your response\.',
+        r'Your response should be plain text',
     ]
 
-    best_pos = -1
-    for marker in markers:
-        pos = raw.lower().rfind(marker.lower())
-        if pos > best_pos:
-            best_pos = pos
+    best_end = -1
+    for pat in terminators:
+        for m in re.finditer(pat, text, re.IGNORECASE | re.DOTALL):
+            end_pos = m.end()
+            if end_pos > best_end:
+                best_end = end_pos
 
-    if best_pos > 0:
-        nl = raw.find("\n", best_pos)
-        if 0 < nl < len(raw) - 10:
-            after = raw[nl:].strip()
-            if len(after) > 20:
-                return after[:1500]
+    if best_end > 0 and best_end < len(text) - 10:
+        after = text[best_end:].lstrip()
+        if len(after) > 10 and not _is_system_prompt(after):
+            return after
 
-    return raw[-1500:].strip()
+    # ── 3. System prompt fragments (last resort) ──
+    for frag in _SYSTEM_PROMPT_FRAGMENTS:
+        pos = text.rfind(frag)
+        if pos > 0:
+            para_break = text.find("\n\n", pos)
+            if para_break > 0 and para_break < len(text) - 20:
+                after = text[para_break:].strip()
+                if len(after) > 10 and not _is_system_prompt(after):
+                    return after
+
+    return text
+
+
+def _is_system_prompt(text: str) -> bool:
+    """Check if text looks like it's still part of a system prompt."""
+    first_200 = text[:200].lower()
+    prompt_signals = [
+        "chatdev is a software company",
+        "here is a new customer's task",
+        "you are",
+        "as the chief",
+        "your task is",
+        "you report to the",
+    ]
+    return any(sig in first_200 for sig in prompt_signals)
 
 
 # ─────────────────────────────────────────────
@@ -234,6 +346,12 @@ def parse_trace(raw: dict) -> dict:
         turns = parse_ag2_trajectory(trajectory)
     elif isinstance(trajectory, str) and trajectory:
         turns = parse_chatdev_log(trajectory)
+
+    # Post-process: clean up content for all turns (handles AG2 format too)
+    for t in turns:
+        t["content"] = _extract_useful_content(t["content"])
+        t["short"] = _summarize(t["content"], 30)
+        t["content_hash"] = re.sub(r"\s+", " ", t["content"].lower().strip())
 
     # MAST annotations
     active_failures = {}
@@ -267,9 +385,73 @@ def parse_trace(raw: dict) -> dict:
 
 
 # ─────────────────────────────────────────────
-# FAILURE LOCATOR
+# FAILURE LOCATOR (improved)
 # ─────────────────────────────────────────────
+
+_FAILURE_SIGNALS = {
+    "1.1": {
+        "patterns": [
+            r"(?:doesn't|does not|didn't|did not)\s+(?:match|follow|meet|satisfy|address)",
+            r"(?:incorrect|wrong|invalid)\s+(?:output|result|implementation|approach)",
+            r"not\s+(?:what was|as)\s+(?:asked|requested|specified)",
+            r"deviat(?:es?|ing|ed)\s+from",
+        ],
+        "phase_hints": ["Coding", "CodeReviewComment", "CodeReviewModification"],
+    },
+    "1.2": {
+        "patterns": [
+            r"(?:not|isn't)\s+(?:my|your)\s+(?:role|responsibility|job)",
+        ],
+        "phase_hints": [],
+    },
+    "1.3": {"patterns": [], "phase_hints": []},
+    "2.3": {
+        "patterns": [
+            r"(?:instead|rather)\s+(?:of|than)",
+            r"(?:off[\s-]?topic|unrelated|irrelevant)",
+        ],
+        "phase_hints": [],
+    },
+    "2.5": {
+        "patterns": [
+            r"(?:already|just)\s+(?:said|mentioned|suggested|told)",
+            r"(?:ignor(?:e|ing|ed))\s+(?:my|the|your)\s+(?:suggestion|feedback|comment)",
+        ],
+        "phase_hints": ["CodeReviewComment", "CodeReviewModification"],
+    },
+    "2.6": {
+        "patterns": [
+            r"(?:but|however|yet)\s+(?:the|this)\s+(?:code|implementation|output)",
+            r"(?:said|stated|claimed)\s+.*?(?:but|however)",
+        ],
+        "phase_hints": ["CodeReviewComment", "CodeReviewModification", "Coding"],
+    },
+    "3.1": {
+        "patterns": [
+            r"(?:stop|end|finish|done)\s+(?:here|now|early)",
+        ],
+        "phase_hints": [],
+    },
+    "3.2": {
+        "patterns": [
+            r"(?:looks?\s+good|lgtm|approved|no\s+(?:issues?|problems?|errors?))",
+            r"(?:without|no)\s+(?:test|check|verif)",
+        ],
+        "phase_hints": ["CodeReviewComment", "Reflection"],
+    },
+    "3.3": {
+        "patterns": [
+            r"(?:everything\s+(?:looks?|seems?|is)\s+(?:correct|fine|good|right))",
+            r"(?:no\s+(?:bugs?|errors?|issues?|problems?))\s+(?:found|detected)",
+            r"(?:approved|accepted|passed)\s+(?:the|this)\s+(?:code|review)",
+        ],
+        "phase_hints": ["CodeReviewComment", "Reflection", "Manual"],
+    },
+}
+
+
 def locate_failures(turns: list, active_failures: dict) -> dict:
+    """Locate where each failure mode most likely occurs in the trace."""
     if not turns:
         return {"turn_annotations": [], "loop_ranges": []}
 
@@ -277,7 +459,7 @@ def locate_failures(turns: list, active_failures: dict) -> dict:
     annotations = [[] for _ in range(n)]
     loops = []
 
-    # Detect repeated identical messages from same agent
+    # ── Step 1: Detect repeated identical messages (loops) ──
     visited = set()
     for i in range(n):
         if i in visited:
@@ -305,7 +487,7 @@ def locate_failures(turns: list, active_failures: dict) -> dict:
                     annotations[ti].append({"code": "2.5", "type": "failure",
                         "detail": "Ignores other agent"})
 
-    # Divergence detection
+    # ── Step 2: Divergence detection ──
     assert_re = re.compile(r"cannot|unsolvable|insufficient|impossible|missing|not enough", re.I)
     ignore_re = re.compile(r"^(continue|proceed|keep going|try again)", re.I)
     for t in range(1, n):
@@ -318,12 +500,78 @@ def locate_failures(turns: list, active_failures: dict) -> dict:
                 annotations[t].append({"code": "re-explain", "type": "divergence",
                     "detail": f"{c['agent']} re-explains"})
 
-    # Place remaining active failures at trace level
+    # ── Step 3: Content & phase-based failure placement ──
     placed_codes = {a["code"] for anns in annotations for a in anns}
+
     for code in active_failures:
-        if code not in placed_codes:
-            annotations[-1].append({"code": code, "type": "failure",
-                "detail": MAST_REGISTRY.get(code, {}).get("label", code)})
+        if code in placed_codes:
+            continue
+
+        signals = _FAILURE_SIGNALS.get(code, {})
+        patterns = signals.get("patterns", [])
+        phase_hints = signals.get("phase_hints", [])
+
+        best_turn = -1
+        best_score = 0
+
+        for i, turn in enumerate(turns):
+            score = 0
+            content = turn["content"]
+            phase = turn.get("phase", "")
+
+            for pat in patterns:
+                if re.search(pat, content, re.I):
+                    score += 3
+
+            if phase in phase_hints:
+                score += 2
+
+            # Position bias based on failure category
+            position_ratio = i / max(n - 1, 1)
+            if code.startswith("3"):
+                if position_ratio > 0.66:
+                    score += 3
+                elif position_ratio > 0.5:
+                    score += 1
+            elif code == "1.1" and 0.2 < position_ratio < 0.7:
+                score += 1
+
+            if code.startswith("2") and i > 0 and turns[i - 1]["agent"] != turn["agent"]:
+                score += 1
+
+            if code.startswith("3") and turn["agent"] in ("Conclusion", "Code Reviewer"):
+                score += 2
+
+            if code == "2.6" and phase in ("CodeReviewModification", "Coding"):
+                if re.search(r"```", content):
+                    score += 2
+
+            if score > best_score:
+                best_score = score
+                best_turn = i
+
+        # Heuristic fallback
+        if best_turn < 0:
+            if code.startswith("3"):
+                for i in range(n - 1, -1, -1):
+                    if turns[i]["agent"] in ("Conclusion", "Code Reviewer") or \
+                       turns[i].get("phase", "") in ("Reflection", "CodeReviewComment"):
+                        best_turn = i
+                        break
+                if best_turn < 0:
+                    best_turn = n - 1
+            elif code.startswith("2"):
+                best_turn = n // 2
+            elif code.startswith("1"):
+                best_turn = max(1, n // 4)
+            else:
+                best_turn = n - 1
+
+        annotations[best_turn].append({
+            "code": code,
+            "type": "failure",
+            "detail": MAST_REGISTRY.get(code, {}).get("label", code),
+        })
 
     return {"turn_annotations": annotations, "loop_ranges": loops}
 
@@ -353,6 +601,64 @@ def extract_beliefs(turns: list) -> dict:
 
 
 # ─────────────────────────────────────────────
+# AGENT INTERACTION GRAPH
+# ─────────────────────────────────────────────
+def build_interaction_graph(turns: list) -> dict:
+    """
+    Build a directed graph of agent interactions from the turn sequence.
+    Returns nodes (agents) and edges (who talks to whom, with counts and phases).
+    """
+    if not turns:
+        return {"nodes": [], "edges": []}
+
+    agent_counts = {}
+    agent_phases = {}
+    for t in turns:
+        a = t["agent"]
+        agent_counts[a] = agent_counts.get(a, 0) + 1
+        phase = t.get("phase", "")
+        if phase:
+            agent_phases.setdefault(a, set()).add(phase)
+
+    edge_counts = {}
+    edge_phases = {}
+    for i in range(len(turns) - 1):
+        src = turns[i]["agent"]
+        dst = turns[i + 1]["agent"]
+        if src != dst:
+            key = (src, dst)
+            edge_counts[key] = edge_counts.get(key, 0) + 1
+            phase = turns[i].get("phase", "")
+            if phase:
+                edge_phases.setdefault(key, set()).add(phase)
+
+    skip_agents = {"System"}
+    agents = list(dict.fromkeys(
+        t["agent"] for t in turns if t["agent"] not in skip_agents
+    ))
+    nodes = []
+    for a in agents:
+        nodes.append({
+            "id": a,
+            "label": a,
+            "turn_count": agent_counts.get(a, 0),
+            "phases": sorted(agent_phases.get(a, set())),
+        })
+
+    edges = []
+    for (src, dst), count in edge_counts.items():
+        if src not in skip_agents and dst not in skip_agents:
+            edges.append({
+                "source": src,
+                "target": dst,
+                "weight": count,
+                "phases": sorted(edge_phases.get((src, dst), set())),
+            })
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
 def process(input_path: str, output_path: str = None):
@@ -362,9 +668,8 @@ def process(input_path: str, output_path: str = None):
     parsed = parse_trace(raw)
     located = locate_failures(parsed["turns"], parsed["active_failures"])
     beliefs = extract_beliefs(parsed["turns"])
+    interaction_graph = build_interaction_graph(parsed["turns"])
 
-    # Build output: clean JSON for the viewer
-    # Strip content_hash from turns (internal only)
     clean_turns = []
     for i, t in enumerate(parsed["turns"]):
         clean_turns.append({
@@ -385,6 +690,7 @@ def process(input_path: str, output_path: str = None):
         "turns": clean_turns,
         "loops": located["loop_ranges"],
         "beliefs": beliefs,
+        "interaction_graph": interaction_graph,
     }
 
     if output_path is None:
@@ -398,7 +704,15 @@ def process(input_path: str, output_path: str = None):
     print(f"  Failures: {list(parsed['active_failures'].keys())}")
     print(f"  Loops: {len(located['loop_ranges'])}")
     print(f"  Belief divergence: {beliefs['has_divergence']}")
+    print(f"  Interaction graph: {len(interaction_graph['nodes'])} nodes, {len(interaction_graph['edges'])} edges")
     print(f"  Written to: {output_path}")
+
+    for i, ann_list in enumerate(located["turn_annotations"]):
+        for ann in ann_list:
+            if ann["type"] == "failure":
+                print(f"  ⚠ Turn {i} ({parsed['turns'][i]['agent']}, "
+                      f"phase={parsed['turns'][i].get('phase','')}): "
+                      f"[{ann['code']}] {ann['detail']}")
 
 
 if __name__ == "__main__":
