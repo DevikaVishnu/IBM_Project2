@@ -6,3 +6,10 @@ dist/
 
 # Editor / OS cruft
 .DS_Store
+
+# MAST/MAD dataset (fetched via data/mast/fetch.sh)
+data/mast/*.json
+
+# AssetOpsBench dataset (fetched via data/assetopsbench/fetch.sh)
+data/assetopsbench/**/*.jsonl
+data/assetopsbench/README.md
