@@ -36,7 +36,7 @@ Raw telemetry (for example runs declared as `assetopsbench.deepagent.instrumente
 
 - This document is the first written specification. Version 0.2 was never written down. 0.3 was derived by reconstructing 0.2's concepts and validating them against four gaps.
 - **No 0.2 field list survives.** This document lists only fields that validation exercised. No other 0.2 field carries over by default.
-- The schema is justified mainly by one real trace (§14) plus framework-independent thought experiments. It is **not proven complete** and **must not be frozen** until the validation in §13 is done.
+- The schema was first justified by one real trace (§14) plus framework-independent thought experiments, and has since been exercised against two more real traces (§13.1). It is **not proven complete** and **must not be frozen** until the validation in §13 is done.
 
 Status labels used in this document:
 
@@ -90,6 +90,8 @@ Rules for `outputs`:
 - Entries are set **only** from the framework's own raw product markers. They are **never** derived from event order. (For example, the last item to appear is not assumed to be the product.)
 - Each entry's `raw_ref` points to the product marker.
 - If a marked product never appears in the trace, the entry's `evidence` is `UNKNOWN`.
+- **UNKNOWN vs empty.** If no observable product marker exists, `outputs` as a whole is `UNKNOWN`. An empty list means something different: the run is observably known to have produced no products. An absent marker must never be recorded as an empty list.
+- **OPEN:** whether product markers written by a benchmark harness (for example a runner's recorded `answer` field) count as product markers is undecided. Until it is resolved, such markers are kept in `raw_ref` and do not populate `outputs`.
 
 ### 4.2 `entities`
 
@@ -228,7 +230,7 @@ No other relation exists in 0.3.
 - The target is **evidence only**. Claims are never targets. A claim is delivered only by containment, which is inferred (§10).
 - **Config, templates and placeholders never count as delivery.** Only the actual rendered input does.
 - **Delivered does not mean attended to.** Uptake shows only through claims and states.
-- Positive delivery is observed directly. Non-delivery is never stored. It is inferred only under established coverage (§10).
+- Positive delivery is observed directly. Non-delivery is never stored. It is inferred only under established coverage, or, for a whole item only, from an observed quantitative upper bound (§10.1).
 
 ### 5.2 `checks`
 
@@ -422,6 +424,8 @@ The truth value is **inferred** as an assessment in two separate parts.
 - **PROVISIONAL** (§12): also counting claims on propositions that imply P through `depends_on` is a generalization, not established by validation.
 - Testimony is counted per testifier after lineage deduplication.
 - When the assessment is used to judge holder H, H's own claims are excluded.
+- **A testifier who contradicts themselves.** If one testifier has grounded claims supporting both P and ¬P, that testifier's contribution to the testimonial assessment is UNCERTAIN. Each of its event-anchored states is kept as it is (§8). The latest claim is never silently chosen over the earlier one.
+- **Unknown lineage between testimonial claims.** When the lineage between two testimonial claims is UNKNOWN (for example because `delivers` cannot be established), their independence is UNKNOWN. They must not be counted as independent corroboration; the assessment reports the independence as UNKNOWN instead.
 
 The two assessments are **never merged**. A consumer may fall back to testimony when the direct assessment is UNKNOWN, but the result is labelled testimonial.
 
@@ -450,8 +454,10 @@ Every inference result keeps provenance back to raw telemetry, including the bas
 | Inference | Inputs | Output and values | Required condition |
 |---|---|---|---|
 | **Coverage established(E)** | Raw reconstruction of E's input: rendered messages, tokenization with the model's tokenizer compared to logged token counts, memory flags, turn limits, template slots, placeholder keys | established / not established. The basis goes into inference provenance, not the schema | Stable reconstruction residual across all calls |
-| **Non-delivery(E, X)** | E's `delivers` links; X's content | TRUE / UNKNOWN (delivery itself is the stored `delivers`) | Coverage of E established. Otherwise UNKNOWN |
+| **Non-delivery(E, X)** | E's `delivers` links; X's content | TRUE / UNKNOWN (delivery itself is the stored `delivers`) | Coverage of E established. Otherwise UNKNOWN, except for the whole-item case below |
 | **Claim delivery(E, C)** | `delivers(E, C.evidence)`; C's span is present in the delivered occurrence | TRUE / FALSE (only under coverage) / UNKNOWN | Same as delivery of its evidence |
+| **Whole-item non-delivery by bound(E, X)** | An observed quantitative upper bound on the new input content of E (for example the growth in logged input tokens since the previous call, minus content already accounted for); the size of X | TRUE (X was not delivered in full) / UNKNOWN | The bound is smaller than X. The quantitative basis is kept in inference provenance. This proves only that the **whole** item was not delivered. It says nothing about which subset of X, if any, was delivered |
+| **Exposed spans(E, X)** | Evidence X; the evidence items delivered to E (`delivers`) | The set of X's spans present in items delivered to E / UNKNOWN when delivery to E cannot be established | Spans are matched by content against items actually delivered to E. This generalizes claim delivery by containment from claims to any evidence. It records exposure only: content overlap never establishes derivation or lineage (`propagates_to` keeps its own definition), and no `partial_delivers` relation exists |
 
 Exposure ladder:
 
@@ -553,7 +559,7 @@ Structure vs diagnosis:
 1. Every stored object that is itself inferred (claims, propositions, states, links), and every inference result, keeps provenance back to raw telemetry.
 2. Delivery is decided only by the actual rendered input.
 3. Config, templates, placeholders and other merely available content never count as delivery. Availability is DEFERRED.
-4. Absence (non-delivery, unprompted change, input equivalence) can be inferred only when input coverage is established. Otherwise the answer is UNKNOWN.
+4. Absence (non-delivery, unprompted change, input equivalence) can be inferred only when input coverage is established. Otherwise the answer is UNKNOWN. The one exception is whole-item non-delivery from an observed quantitative upper bound (§10.1), which shows only that the complete item was not delivered.
 5. Delivered does not mean attended to. Uptake shows only through claims and states.
 6. Claims come only from observable text, never from hidden reasoning.
 7. Verification counts only when it is observable. A bare verdict gives UNKNOWN scope, which is not an empty scope.
@@ -570,7 +576,7 @@ Structure vs diagnosis:
 
 **DEFERRED (not in 0.3):**
 
-- partial delivery;
+- partial delivery as a stored concept (partial exposure is inferred instead, through separate evidence items and Exposed spans, §10.1);
 - availability or access relations;
 - explicit omission or failure nodes; modelling non-delivery as an event;
 - obligation objects or an `obligates` link; a `requires_verification` property;
@@ -604,6 +610,13 @@ Structure vs diagnosis:
 
 None of these may be relied on as a locked rule until a trace establishes it.
 
+**OPEN after cross-trace validation (§13.1):**
+
+- **Lineage through tools and files.** Run 620 contains a real instance (tool result → file written by the framework → `read_file`/`grep` fragments). It stays deferred: the fragments did not affect the run's product, and generalizing `propagates_to` to any consuming event would not capture it, because the file write and the tool's read of the file are not observable events.
+- **First-class delegation and hierarchy.** HyperAgent trace 25 has genuine delegation, but its rendered inputs are not logged. Delegation appeared inferable from events, evidence and `delivers` with full telemetry; this is untested.
+- **Availability and access.** Run 620 has data that was available to the agent (the rest of the offloaded file; further pages of a paginated result) but never read. No trace yet shows such data deciding the outcome.
+- **Benchmark-harness markers for `run.outputs`** (§4.1).
+
 **Known limits:**
 
 - `propagates_to` cannot cross events that aren't agent inputs.
@@ -615,7 +628,7 @@ None of these may be relied on as a locked rule until a trace establishes it.
 
 ## 13. Validation limits
 
-This candidate is justified mainly by **one real trace**: the MAST/ChatDev Gomoku trace (§14). The rest comes from framework-independent thought experiments:
+This candidate was first justified by **one real trace**, the MAST/ChatDev Gomoku trace (§14). It has since been exercised against two more real traces (§13.1). The rest comes from framework-independent thought experiments:
 
 - a supervisor drops a budget constraint;
 - a RAG answer goes wrong after the decisive document is truncated;
@@ -646,6 +659,20 @@ This candidate is justified mainly by **one real trace**: the MAST/ChatDev Gomok
 - one with parallel branches or merged outputs;
 - one with information flowing through tools;
 - one with belief revision or retraction.
+
+### 13.1 Cross-trace validation status
+
+0.3 has now been exercised against three real traces:
+
+| Trace | What it exercised | Result |
+|---|---|---|
+| MAST/ChatDev Gomoku #7 | requirement non-delivery, verification scope, artifact lineage, repeated review/modification | fully represented (§14) |
+| MAST/HyperAgent trace 25 (`pylint-dev__pylint-6506`) | genuine Planner → Navigator/Editor/Executor delegation; reports to the Planner that cannot be attributed to the sub-agent's observed output; a report inconsistent with the Executor's last observed claim; missing command output | partially represented. All `delivers` and `propagates_to` links are UNKNOWN because rendered inputs are not logged |
+| AssetOpsBench deep-agent run 620 | very large tool results offloaded to files by the framework; partial exposure of those results to the model (shown by input-token growth); later recovery of exact fragments through `read_file`/`grep`; parallel tool calls; a paginated, partial tool result | partially represented. Positive delivery is UNKNOWN (no rendered inputs); the tool/file lineage cannot be stored (§12) |
+
+**No stored-schema change was required.** Every failure to represent something traced back either to missing telemetry or to an underspecified inference rule. The inference clarifications that cross-trace validation justified are in §4.1 (`run.outputs` UNKNOWN vs empty), §9 (a testifier who contradicts themselves; unknown lineage between testimonial claims) and §10.1 (whole-item non-delivery by bound; exposed spans). The issues that remain open are listed in §12.
+
+Of the "minimum before freezing" items above, a non-ChatDev trace that uses tools (run 620) and a trace with genuine delegation (trace 25) have been exercised, but trace 25 without logged inputs. None of the items is counted as satisfied. The main practical finding is that `delivers` can only be established when each model call's rendered input is logged.
 
 ---
 
@@ -869,6 +896,8 @@ Coverage was COMPLETE in every case.
 - **Assessment relative to an artifact:** inferred, not stored as a state.
 - **Framework labels:** live only in `raw_ref`.
 
+**Clarifications after cross-trace validation (§13.1).** These change the inference layer and the meaning of `run.outputs` when no marker exists. They change no stored structure: no object, field or relation was added or removed.
+
 ---
 
 ## 16. What this schema deliberately does NOT claim
@@ -876,9 +905,9 @@ Coverage was COMPLETE in every case.
 - It does not claim to know what an agent attended to, intended or believed beyond its observable claims.
 - It does not claim causation. Contribution is a hypothesis, capped at "supported contribution".
 - It does not claim that content carried between items kept its meaning, its truth or its defects.
-- It does not claim that an omission happened unless input coverage is established.
+- It does not claim that an omission happened unless input coverage is established, or, for a whole item only, an observed quantitative bound shows it was not delivered in full.
 - It does not claim what a bare verdict checked.
 - It does not claim that a repetition was unnecessary or pathological.
 - It does not claim that testimony is true, or that several reports from one origin are independent.
-- It does not claim completeness: it rests on one real trace (§13).
+- It does not claim completeness: it rests on three real traces, two of them only partially represented (§13.1).
 - It does not reproduce any framework's workflow model or any benchmark's failure taxonomy.
