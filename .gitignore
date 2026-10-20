@@ -13,3 +13,16 @@ data/mast/*.json
 # AssetOpsBench dataset (fetched via data/assetopsbench/fetch.sh)
 data/assetopsbench/**/*.jsonl
 data/assetopsbench/README.md
+
+# Local-only research material (never published)
+# Raw run traces are read-only evidence and stay local.
+data/assetopsbench/runs/
+# Executed, unredacted copies of published experiment files.
+/local/
+.claude/settings.local.json
+
+# Caches and tool scratch
+__pycache__/
+*.pyc
+.Rhistory
+.playwright-mcp/
