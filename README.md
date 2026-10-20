@@ -1,281 +1,134 @@
 # AgentTrace
 
-**A framework-independent semantic observability layer for agentic AI systems.**
+**A framework-independent semantic observability layer for agentic AI: it records what information existed in a run, what reached each agent, what agents asserted, and what was verified.**
 
 > Developed as part of an IBM Research collaboration on *Mission Control for Agentic AI*.
 > CSE 523 Advanced Project in Computer Science — Devika Vishnu, Komalika Acharya
 
----
-
-## Overview
-
-Agent frameworks emit raw telemetry: prompts, completions, tool calls, configuration, files and logs. That telemetry records what happened. It does not record what any of it *meant* for the run. AgentTrace adds a semantic layer above raw telemetry, without replacing it, that answers six questions about a run:
-
-- **What existed:** which information was present, such as requirements, configuration, task briefs, tool results, documents and code.
-- **What reached each agent:** which information was actually in each agent's rendered input, as opposed to merely configured or available.
-- **What agents claimed or believed:** observable assertions and stances only, never hidden reasoning.
-- **What was verified:** which propositions a reviewer, test or judge actually evaluated, and which required checks were missed.
-- **How content moved and failures may have spread:** how content propagated between artifacts, and where failures may have propagated.
-- **Where the telemetry runs out:** which conclusions must stay UNKNOWN because the necessary information was never recorded.
-
-The aim is Mission Control-style debugging and forensics: explaining *why* a run produced its output, and being explicit about what cannot be known.
-
-**Status:** schema design and validation. The schema, `agenttrace.semantic/0.3`, is **experimental and not frozen**. No production extractor exists yet.
+**Status: research prototype.**
+- The canonical schema is experimental.
+- Semantic representations are currently written and checked by hand.
+- No automatic semantic extractor or final visualization exists yet.
 
 ---
 
-## Research progression
+## Problem
+
+Agent frameworks emit raw telemetry: prompts, completions, tool calls, configuration and files. That record of *what happened* does not directly answer:
+
+- **Exposure:** which evidence actually reached each agent's rendered model input, as opposed to being configured or merely available?
+- **Assertions:** what did each agent observably assert, and on what evidence?
+- **Information-flow failures:** where was required information lost, truncated, or never delivered?
+- **Divergence:** where do agents' observable positions differ from each other, or from the evidence they received?
+
+**Motivating case:** MAST/ChatDev Gomoku trace #7.
+- The configuration required a GUI, but that requirement never reached the programmer's or the reviewers' inputs.
+- No review checked for a GUI, and a console-only program was shipped.
+- The agents did not disagree. The information was simply never delivered.
+- A belief-timeline view could not show this, which moved the project from belief tracking to information-flow observability.
+
+**What "belief" means here.** In AgentTrace, beliefs and states are **observable, evidence-grounded assertions**: what an agent's output text claims at a specific event. They are never hidden LLM mental states, and they are never carried forward through silence.
+
+## Approach
 
 ```
-Belief Explorer ──► Gomoku falsification ──► agenttrace.semantic/0.3 ──► cross-framework validation
-   (prototype)       (delivery failure,        (experimental schema)      (ChatDev, HyperAgent,
-                      not belief divergence)                                deepagents/AssetOpsBench)
-                                                                                     │
-                       next falsification experiment ◄── observability-boundary findings
+raw traces ──► canonical semantic representation ──► evidence-grounded comparison ──► visualization
+(framework      (agenttrace.semantic/0.3: entities,     (derived, never stored:          (planned)
+ telemetry)      events, evidence, delivers, claims,      exposure, state vs evidence)
+                 states, provenance to raw records)
 ```
 
-1. **Belief Explorer (prototype).** A visualiser of per-agent belief states and divergence in multi-agent conversations (see [Earlier prototype](#earlier-prototype-belief-explorer)).
-2. **Gomoku falsification.** A MAST/ChatDev failure that belief tracking could not explain. Every agent "agreed"; none of them had received the requirement.
-3. **`agenttrace.semantic/0.3`.** A schema built around delivery, verification, provenance and lineage, designed by validating one gap at a time against that trace.
-4. **Cross-framework validation.** The schema was run against HyperAgent and AssetOpsBench deep-agent traces to try to break it.
-5. **Observability-boundary findings.** Most remaining failures to represent a trace came from missing telemetry, not from missing schema concepts.
-6. **Next experiment.** A fully observable delegated deep-agent run.
+**Design principles:**
+- Every semantic object points back to the raw record it came from.
+- Delivery is stored only when it is observed in a rendered input.
+- Anything the telemetry cannot establish is reported as **UNKNOWN**, not guessed.
+- The core schema contains no framework- or benchmark-specific concepts.
 
----
+## Current implementation
 
-## Motivating example: MAST/ChatDev Gomoku trace #7
-
-The run's configuration sets `gui_design: True`. The rest of the chain:
-
-```
-GUI requirement exists in configuration
-  → it is never rendered into the programmer's input
-  → the programmer never receives it
-  → the three code reviewers do not receive it either
-  → GUI verification is missed (reviewers: UNCERTAIN obligation; test: no GUI obligation)
-  → a console-only program reaches the final output
-```
-
-Delivery was established by reconstructing every prompt and matching its token count against the logged count. The residual was a constant +2 tokens on all 12 model calls. So "not delivered" is a supported finding, not a guess.
-
-This is **not primarily a belief divergence**. It is an **information-delivery failure**: the agents didn't disagree; the requirement never reached them. A turn-by-turn belief view cannot show it. That finding broadened the project from belief tracking to semantic information-flow observability.
-
----
-
-## Current schema: `agenttrace.semantic/0.3`
-
-Canonical specification: [`docs/agenttrace.semantic.0.3.md`](docs/agenttrace.semantic.0.3.md). **Experimental, not frozen.**
-
-### Stored objects
-
-| Object | Meaning |
+| Capability | Status |
 |---|---|
-| `run` | One execution. `run.outputs` names its final products, identified from framework product markers |
-| `entities` | Agents, tools, services, framework and environment. Agent identity is separate from role and model |
-| `events` | Observable atomic input/output units. Not necessarily agent-originated |
-| `evidence` | Observable content. Each item records the event that first produced it (`produced_by`) |
-| `claims` | Observable assertions extracted from a span of one evidence item |
-| `propositions` | Canonical statements, independent of who holds them |
-| `states` | A holder's observable stance on a proposition at one event |
-| `links` | The relations below |
+| `agenttrace.semantic/0.3` schema | **Defined.** Experimental canonical schema. Exercised against MAST/ChatDev, MAST/HyperAgent and AssetOpsBench traces, with no stored-schema change so far |
+| DeepAgents instrumentation: rendered model inputs, delegations, large-result eviction, file reads/writes | **Implemented**, flag-gated. Used in three real runs |
+| Research configuration: specialist sub-agents, read-only work-order server, call/cost budget guard | **Implemented**, experimental, off by default |
+| Hand-grounded 0.3 fixtures (run 621, scenario_3) | **Completed** and independently reviewed |
+| O2/O3 comparison (`agenttrace.compare/0.1`) | **Implemented** and tested on fixtures |
+| Automated structural adapter + verifier (traces → 0.3) | **Planned.** Design recommended; adapter decisions pending |
+| Automated claim, proposition and state extraction | **Planned.** Not automated |
+| Belief-divergence detection on real industrial multi-agent runs | **Not demonstrated** |
+| Mission Control visualization of 0.3 | **Planned.** A JSON profile draft exists; the legacy Belief Explorer UI does not read 0.3 |
 
-### Relations
+**O2/O3 in brief.**
+- **O2, evidence exposure:** given a model call, which parts of which evidence items were present in its rendered input.
+- **O3, state versus evidence:** given an agent's observable state on a proposition, how it compares with the evidence that directly bears on that proposition.
 
-| Relation | Endpoints | Meaning |
-|---|---|---|
-| `delivers` | agent-input event → evidence | The evidence was present in the agent's **actual rendered input**. Configuration, templates or availability never count |
-| `checks` | event → proposition | An observable event evaluated the proposition |
-| `propagates_to` | evidence → evidence | **Content lineage only**: specific content of one item was reproduced in a later one by an event that received it. Not causality, not semantic equivalence |
-| `depends_on` | proposition → proposition | Logical necessity: A cannot be TRUE unless B is TRUE |
-| `supported_by` / `contradicted_by` | proposition → evidence | The evidence **directly** bears for or against the proposition |
+Both are derived on demand. They never add objects to the stored representation.
 
-`segments`, `revises` and `conflicts_with` are not part of 0.3.
+## Validation
 
-### Key distinctions
+All runs used AssetOpsBench with the DeepAgents runner and Claude Sonnet 5. Raw traces are kept locally and are not published.
 
-- **Evidence** is role-neutral observable content: messages, code, files, config values, tool results, retrieved chunks, reports, final answers. Evidence does not intrinsically mean support. Support and contradiction exist only through links.
-- **Claims** are observable assertions extracted from evidence.
-- **States** take one of four values: `TRUE | FALSE | UNKNOWN | UNCERTAIN`. Each is grounded in the holder's own claims at one event. There are no sticky beliefs carried forward through silence, and nothing is inferred from hidden reasoning.
-- **Direct evidence vs testimony:**
-  - Every assertion is a claim, and a claim is testimony.
-  - `supported_by` / `contradicted_by` represent only direct bearing.
-  - Agent-authored content can still be direct evidence when it is itself the thing being evaluated, such as code or structured output.
-  - Testimonial and direct assessments are kept separate and never merged.
-- **Stored vs inferred:** these are computed by an inference layer and never stored:
-  - non-delivery;
-  - verification scope and obligations;
-  - unverified requirements;
-  - lineage chains and defect persistence;
-  - contribution hypotheses (capped at "supported contribution");
-  - repetition structure.
+- **Run 620** (natural; run on 2026-10-05, then again on 2026-10-13 pre-registered with rendered inputs captured): single agent, no delegation.
+  - A large tool result was moved to a file. Only a short substitute reached the model.
+  - The model later read the file back, and that content reached its input.
+  - Use of that content in the final answer was **not** demonstrated.
+- **Run 621** (natural): single agent.
+  - Values read back from an offloaded file were restated in the final answer. This is the basis of manual fixture A.
+  - The hop from tool result to file to read is observable, but 0.3 cannot store it as lineage. That is a declared schema limit, not a counterexample.
+- **scenario_3, condition B** (a declared research configuration with specialist sub-agents; executed once):
+  - The coordinator delegated only to the generic sub-agent.
+  - The sub-agent never returned, and the run was stopped by the budget guard.
+  - The earliest observable failure, a file-path error, was seen only by the sub-agent.
+  - One annotator only; a second is not yet named.
+- **Natural delegation:** 0 of 7 unmodified natural runs delegated.
 
-  The core contains no framework or benchmark concepts: no ChatDev phases, no completion markers, no MAST codes.
+**Manual fixtures.**
+- Two hand-grounded 0.3 fixtures (run 621, scenario_3 condition B), with every object anchored to raw records.
+- Three comparison fixtures for O2/O3: two from real runs and one synthetic, used for rule coverage only.
 
----
+**Offline tests.** 440 tests pass on the implementation branch. They use fake models and make no model calls. They check:
+- the instrumentation and flag-off behavior;
+- the budget guard;
+- the fixtures against the raw traces;
+- the comparison rules.
 
-## Cross-framework validation
+**Test counts are not evidence of extraction accuracy.** No automatic extractor exists yet, and no held-out, fully instrumented gold trace is available to measure one.
 
-0.3 has been exercised against three real settings. "Partial" means some relations could not be established from the recorded telemetry. It does not mean the schema failed.
+## Research roadmap
 
-### 1. MAST / ChatDev: Gomoku trace #7 (full)
+1. **Structural adapter and independent verifier.** Deterministic conversion of instrumented traces into 0.3. It covers entities, events, evidence and observed delivery, with no claims, and it is checked against the manual fixtures.
+2. **Constrained claim extraction.** Verbatim-span claims and propositions from a declared vocabulary, with abstention. Faithfulness is judged by two human annotators.
+3. **Held-out validation.** A new pre-registered, fully instrumented run that was not used during development.
+4. **Genuine industrial multi-agent belief divergence.** Runs where specialists actually delegate, hand back and disagree on observable evidence.
+5. **Visualization and dashboard integration.** Mission Control views built on the 0.3 representation.
 
-- **Stresses:** requirement non-delivery, verification scope, artifact lineage, a repeated review/modification workflow.
-- **Result:** fully represented. This trace directly motivated several 0.3 additions: `delivers`, `checks`, `produced_by` and `run.outputs`. It is the worked example in the schema document.
+## Repositories and code
 
-### 2. MAST / HyperAgent: trace #25, `pylint-dev__pylint-6506` (partial)
-
-- **Stresses:** real Planner → Navigator / Editor / Executor delegation; contradictory and unattributed testimony; missing direct execution evidence; incomplete telemetry.
-- **Result:** partially represented. **No stored-schema gap found.**
-- **Why partial:** rendered prompts aren't logged, and neither are the calls that produced the relayed reports, so every `delivers` and `propagates_to` link is UNKNOWN.
-- **Supported finding:** H1 and H3, two of the reports relayed to the Planner, are unattributed relay content. Neither can be traced to the corresponding sub-agent's observed output, and H3 is inconsistent with the Executor's last observed claim. The Planner then declared the issue resolved.
-- **Direct evidence:** the command output that would settle the question is not in the trace.
-
-### 3. AssetOpsBench / deep-agent: run 620 (partial)
-
-- **Stresses:** very large tool results (≈90K–115K characters); the framework offloading them to files; partial exposure to the model; later recovery with `read_file` and `grep`; paginated tool results; parallel tool calls.
-- **Key finding: partiality at two levels.**
-  1. The industrial `history` tool returned only part of the available data: one page of 1,000 observations with `has_more: true`.
-  2. The framework then gave the model only a small substitute of that already-partial result, about 400 tokens. This is shown by the growth in logged input tokens, not by the prompts, which aren't recorded.
-- **Recovery:** the model later read back exact fragments of the result through `read_file`/`grep`. These were verified line by line against the original.
-- **Limitation:** 0.3 cannot store lineage across `tool result → framework/file → read_file/grep result`, because `propagates_to` requires the producing event to have received the source as agent input. This is a real, known limitation. It has **not yet justified a stored-schema change**: the recovered fragments didn't affect the final answer, and the file write and read aren't observable events.
-
-### What 0.3 has survived
-
-- **Frameworks:** ChatDev, HyperAgent, deepagents/AssetOpsBench.
-- **Phenomena:** information omission, verification, delegation, contradictory testimony, artifact lineage, repeated workflows, large outputs, partial/truncated exposure, file-mediated retrieval, parallel tool calls, paginated results.
-
-**No stored-schema change has been required since the 0.3 design was finalized.**
-
-### Inference clarifications from validation
-
-These refine the inference layer only; the stored schema is unchanged.
-
-- A witness who supports both P and ¬P makes that witness's testimonial contribution **UNCERTAIN**. Each event-anchored state is kept, and the latest claim is never silently preferred.
-- If the lineage between testimonial claims is UNKNOWN, their **independence is UNKNOWN**. They are not counted as independent corroboration.
-- No observable product marker means `run.outputs` is **UNKNOWN, not empty**.
-- **Whole-item non-delivery** can be inferred from a valid token or size upper bound. This proves only that the complete item wasn't delivered, not which part was.
-- **Span-level exposure** of any evidence can be inferred by containment against delivered items. Content overlap never establishes lineage.
-- **Partial delivery** does not need a new relation yet: separate evidence items, ordinary `delivers` and containment are enough.
-- **`propagates_to` is not generalized** yet.
-
----
-
-## Open issues
-
-These are open research questions. None has been added to the stored schema.
-
-- lineage through tools and files (non-agent dataflow);
-- first-class delegation and hierarchy;
-- availability and access (data an agent could have read but didn't);
-- nested runs;
-- parallel branches and merged outputs;
-- belief revision and retraction;
-- ambiguous provenance;
-- whether benchmark-harness markers can identify `run.outputs`.
-
-The main practical finding cuts across all of them: **`delivers` can only be established when each model call's rendered input is logged.** In two of the three traces it wasn't, so most exposure-based conclusions had to stay UNKNOWN.
-
----
-
-## Current status
-
-**Completed**
-
-- AssetOpsBench environment and industrial MCP tools exercised.
-- CouchDB, trajectory and OpenTelemetry persistence working. Run trajectories and OTEL spans are kept locally under `data/assetopsbench/runs/`.
-- The plan-execute, claude-agent and deep-agent runners exercised.
-- Passive deep-agent instrumentation with sub-agent fields (`delegations`, `delegation_id`, `parent_agent_id`). These were unused in the runs so far, which were single-agent.
-- `agenttrace.semantic/0.3` designed and documented.
-- Cross-framework validation performed (above).
-
-**Not yet implemented**
-
-- a production semantic extractor;
-- framework adapters emitting 0.3;
-- a Mission Control UI consuming the new schema;
-- a fully observable delegated deep-agent run.
-
-The React UI in this repository is the **earlier Belief Explorer prototype**. It is not the 0.3 Mission Control UI and does not consume the new schema.
-
----
-
-## Next experiment: a fully observable delegated deep-agent run
-
-The next high-value step is one deliberately instrumented run, not another benchmark example. It should log:
-
-- the model inputs of both the parent agent and its sub-agents, including system prompts;
-- handoff content in both directions;
-- delegation IDs and parent agent IDs;
-- full tool outputs;
-- any large-result eviction or substitute text;
-- file writes and the reads that follow them.
-
-Ideally, a value recovered from an offloaded result should actually affect the final answer.
-
-This would test:
-
-- whether delegation can remain an inference rather than a stored concept;
-- whether `delivers` works when telemetry is complete;
-- whether non-agent lineage actually requires a schema change;
-- whether availability/access needs representation;
-- whether a future 0.4 is justified at all.
-
----
-
-## Repository layout
-
-| Path | Contents |
+| Repository | Contents |
 |---|---|
-| `docs/agenttrace.semantic.0.3.md` | Canonical schema specification (experimental), including the Gomoku worked example and validation status |
-| `data/mast/` | MAST annotated dataset (MAD). `fetch.sh` downloads it; the JSON files are not committed |
-| `data/assetopsbench/` | AssetOpsBench benchmark data. `fetch.sh` downloads it; the data files are not committed. Instrumented runs are kept locally in `runs/` and not yet published |
-| `src/` | Earlier prototype: React visualiser (`App.jsx`, `BeliefEvolution.jsx`) |
-| `tests/` | Earlier prototype: trace processor, belief extractor, four ChatDev sample traces |
-| `BELIEF_EVOLUTION_README.md` | Earlier prototype documentation |
+| **IBM_Project2** (this repo) | Canonical schema, research state, visualization profile, experiment records and scripts, and the legacy Belief Explorer prototype |
+| **[AssetOpsBench fork, `research/agenttrace-specialists`](https://github.com/DevikaVishnu/AssetOpsBench/tree/research/agenttrace-specialists)** | The implementation, under `src/agent/deep_agent/`: instrumentation, specialist configuration, budget guard, [O2/O3 code](https://github.com/DevikaVishnu/AssetOpsBench/blob/research/agenttrace-specialists/src/agent/deep_agent/_semantic_compare.py), fixtures and tests. It is a research branch on a fork of [IBM/AssetOpsBench](https://github.com/IBM/AssetOpsBench) and is not merged upstream |
 
-Fetch the datasets:
+Datasets are not committed. Fetch them with `bash data/mast/fetch.sh` (MAST/MAD) and `bash data/assetopsbench/fetch.sh` (AssetOpsBench).
 
-```bash
-bash data/mast/fetch.sh            # MAST / MAD dataset (Cemri et al., 2025)
-bash data/assetopsbench/fetch.sh   # AssetOpsBench (Patel et al., 2025)
-```
+## Documentation
 
----
-
-## Earlier prototype: Belief Explorer
-
-> Historical. This was AgentTrace's first architecture, not its current one.
-
-The prototype visualised multi-agent conversations as a belief timeline:
-
-```
-Raw MAS trace  ──►  process_trace.py  ──►  belief_extractor.py  ──►  BeliefEvolution.jsx
-                    normalise to JSON      classify belief states     interactive timeline grid
-                                           + detect divergences
-```
-
-- **Belief grid:** agents × turns, each cell one of ten heuristic states (idle, asking, proposing, building, reviewing, wants change, approving, blocked, pushing, completing).
-- **Divergence detection:** six pattern-based detectors, such as blocked-vs-pushing, approval without substance, and step repetition.
-
-**Why it was superseded:**
-- It classified states with keyword and phase heuristics.
-- It carried states forward through silence.
-- It built in ChatDev concepts.
-- Above all, it had no notion of what each agent actually received, which is exactly what the Gomoku failure turned on.
-
-**Running it:** requires Node.js ≥ 18 and Python ≥ 3.9.
-
-```bash
-npm install
-npm run dev        # then open http://localhost:5173
-
-python tests/process_trace.py path/to/raw_trace.json processed.json
-python tests/belief_extractor.py processed.json enriched.json
-```
-
-Load the enriched JSON with the viewer's **Load JSON** button; sample traces are in `tests/`. More detail: [`BELIEF_EVOLUTION_README.md`](BELIEF_EVOLUTION_README.md).
-
----
+- **[Schema `agenttrace.semantic/0.3`](docs/agenttrace.semantic.0.3.md):** objects, relations, inference rules, known limits, and the Gomoku worked example.
+- **[Research state](docs/research/STATE.md):** current findings, decisions and the next step.
+- **[Research log](docs/research/RESEARCH_LOG.md):** dated chronology from the Belief Explorer to the current milestone, with corrected interpretations and open gaps.
+- **[Visualization profile 0.1](docs/research/agenttrace-viz-profile-0.1.md):** JSON serialization profile (draft).
+- **Experiment records:**
+  - run 620: [pre-registration](docs/experiments/prereg-aob-620-sonnet5-deep-fileobs-20261013.md) and [result](docs/experiments/result-aob-620-sonnet5-deep-fileobs-20261013.md);
+  - scenario_3: [pre-registration](docs/experiments/prereg-aob-sc3-sonnet5-deep-spec-B-20261014.md);
+  - [experiment scripts](docs/experiments/).
+- **Fixtures and the comparison spec:**
+  - [0.3 fixtures](https://github.com/DevikaVishnu/AssetOpsBench/tree/research/agenttrace-specialists/src/agent/deep_agent/tests/fixtures/agenttrace_semantic_0_3);
+  - [`agenttrace.compare/0.1` spec](https://github.com/DevikaVishnu/AssetOpsBench/blob/research/agenttrace-specialists/src/agent/deep_agent/tests/fixtures/agenttrace_compare_0_1/SPEC.md).
+- **[MAST dataset notes](data/mast/README.md).**
+- **Legacy Belief Explorer:** see [`BELIEF_EVOLUTION_README.md`](BELIEF_EVOLUTION_README.md).
+  - The prototype is a React timeline of heuristic per-agent belief states and divergence patterns over ChatDev/AG2 traces (`src/`, `tests/`).
+  - It was superseded because it modelled no information delivery.
+  - To run it: `npm install && npm run dev`.
 
 ## References
 
@@ -284,3 +137,5 @@ Load the enriched JSON with the viewer's **Load JSON** button; sample traces are
 - Qian, C. et al. (2023). *ChatDev: Communicative Agents for Software Development.* arXiv:2307.07924.
 - Wu, Q. et al. (2024). *AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversations.* COLM 2024.
 - Epperson, W. et al. (2025). *Interactive Debugging and Steering of Multi-Agent AI Systems.* CHI 2025. arXiv:2503.02068.
+
+See [LICENSE](LICENSE).
