@@ -1,3 +1,12 @@
+:root {
+  --app-ink: #172033;
+  --app-muted: #64748b;
+  --app-line: #e2e8f0;
+  --app-panel: #f8fafc;
+  --app-blue: #2563eb;
+  --app-font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
 *, *::before, *::after {
   margin: 0;
   padding: 0;
@@ -8,7 +17,7 @@ html, body, #root {
   width: 100%;
   min-height: 100vh;
   background: #fff;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: var(--app-font);
   font-size: 14px;
   color: #1a1a1a;
   -webkit-font-smoothing: antialiased;
@@ -17,3 +26,26 @@ html, body, #root {
 button {
   font-family: inherit;
 }
+
+.app-nav {
+  display: flex;
+  gap: 0;
+  padding: 10px max(16px, calc((100vw - 1100px) / 2));
+  border-bottom: 1px solid var(--app-line);
+  background: var(--app-panel);
+}
+
+.app-nav button {
+  font-size: 12px;
+  padding: 7px 14px;
+  border: 1px solid var(--app-line);
+  border-left: 0;
+  background: #fff;
+  color: var(--app-muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.app-nav button:first-child { border-left: 1px solid var(--app-line); border-radius: 6px 0 0 6px; }
+.app-nav button:last-child { border-radius: 0 6px 6px 0; }
+.app-nav button[aria-pressed="true"] { background: var(--app-blue); border-color: var(--app-blue); color: #fff; }

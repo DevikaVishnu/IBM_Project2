@@ -393,7 +393,7 @@ export default function App(){
 }
 
 const S={
-  app:{fontFamily:"'Segoe UI',system-ui,-apple-system,sans-serif",color:"#1a1a1a",maxWidth:1200,margin:"0 auto",padding:"0 12px",background:"#fff",minHeight:"100vh"},
+  app:{fontFamily:"'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif",color:"#172033",maxWidth:1100,margin:"0 auto",padding:"0 16px 40px",background:"#fff",minHeight:"100vh"},
   header:{display:"flex",alignItems:"baseline",gap:12,padding:"14px 0",borderBottom:"1px solid #e5e5e5",flexWrap:"wrap"},
   tag:{fontFamily:"monospace",fontSize:11,padding:"2px 8px",borderRadius:6,background:"#f3f3f3",color:"#666"},
   legend:{display:"flex",gap:10,marginLeft:"auto",alignItems:"center",flexWrap:"wrap"},

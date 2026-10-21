@@ -56,7 +56,7 @@ export default function AssetOpsTimeline() {
 }
 
 const s = {
-  page: { maxWidth: 980, margin: "0 auto", padding: "42px 24px", color: "#172033" },
+  page: { maxWidth: 1100, margin: "0 auto", padding: "24px 16px 40px", color: "#172033", fontFamily: "'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif" },
   header: { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 40 },
   kicker: { fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em", color: "#64748b" },
   title: { fontSize: 32, margin: "7px 0" }, task: { margin: 0, color: "#475569", fontSize: 16, maxWidth: 610, lineHeight: 1.5 },
