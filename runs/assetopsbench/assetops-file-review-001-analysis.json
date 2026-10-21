@@ -1,0 +1,37 @@
+{
+  "run_id": "assetops-file-review-001",
+  "artifact": {
+    "artifact_id": "assetops-belief-handoff.json",
+    "artifact_version": 1,
+    "content_hash": "4694481e5a27aa3960a842ab06d0fcc0b4bde4f2aea7637a8e84914eb7aa024b",
+    "produced_by": "artifact-writer/write_handoff_artifact",
+    "read_by": "artifact-reviewer/read_handoff_artifact"
+  },
+  "review": {
+    "checks": "status(assetops-belief-handoff.json) equals READY",
+    "check_target": "artifact status",
+    "check_result": "PASS",
+    "evidence": "artifact-reviewer/read_handoff_artifact"
+  },
+  "delivery": {
+    "writer_and_reviewer_inputs_logged": true,
+    "manager_received_writer_and_reviewer_reports": true,
+    "file_lineage_relation": "UNKNOWN: the reviewer read the file directly; the strict propagates_to rule requires observable agent-input delivery."
+  },
+  "schema_result": {
+    "supported_now": [
+      "artifact_id",
+      "artifact_version",
+      "content_hash",
+      "read_by",
+      "produced_by",
+      "checks",
+      "check_target",
+      "check_result"
+    ],
+    "still_not_proved": [
+      "visibility policy",
+      "propagates_to through non-agent file I/O"
+    ]
+  }
+}
