@@ -1,27 +1,68 @@
 import { useMemo, useState } from "react";
-import e607 from "../runs/assetopsbench/assetops-607-events.json";
-import e620 from "../runs/assetopsbench/assetops-620-events.json";
-import b607 from "../runs/assetopsbench/assetops-607-beliefs.json";
-import b620 from "../runs/assetopsbench/assetops-620-beliefs.json";
+import events607 from "../runs/assetopsbench/assetops-607-events.json";
+import events620 from "../runs/assetopsbench/assetops-620-events.json";
 
-const DATA={
-  "607":{title:"Scenario 607 — failure modes and sensors",question:"Find Chiller 6 failure modes at MAIN that available sensors can monitor.",finding:"The agent gets Chiller-specific sensor evidence, but both Chiller failure-mode requests fail. Pump modes do not prove a Chiller fact.",events:e607,beliefs:b607},
-  "620":{title:"Scenario 620 — anomaly-model sensors",question:"Recommend sensors and temporal behavior for detecting a Chiller 6 trip.",finding:"The answer is supported for sensor availability and date coverage. It does not test whether any sensor detects a chiller trip.",events:e620,beliefs:b620},
+const traces = {
+  "607": { task: "Find Chiller 6 failure modes that its sensors can monitor.", events: events607 },
+  "620": { task: "Choose Chiller 6 sensors and data timing for trip detection.", events: events620 },
 };
-function decode(e){if(e.action==="final_answer")return{input:null,output:e.message,summary:e.message,error:false};try{const p=JSON.parse(e.message),raw=Array.isArray(p.output)?p.output.map(x=>x.text||"").join("\n"):String(p.output||""),out=JSON.parse(raw);return{input:p.input||{},output:out,summary:out.error||out.message||raw.slice(0,150),error:Boolean(out.error)}}catch{return{input:null,output:e.message,summary:e.message.slice(0,150),error:/error/i.test(e.message)}}}
-const Block=({value})=><pre style={s.code}>{typeof value==="string"?value:JSON.stringify(value,null,2)}</pre>;
-const Chip=({children,bad,good})=><span style={{...s.chip,...(bad?s.bad:good?s.good:{})}}>{children}</span>;
 
-export default function AssetOpsTimeline(){
- const [id,setId]=useState("607"),[pick,setPick]=useState(0);const d=DATA[id],info=useMemo(()=>d.events.map(decode),[d]);const ev=d.events[pick]||d.events[0],detail=info[pick]||info[0],states=d.beliefs.belief_timeline||[];
- const tools=d.events.filter(x=>x.action==="tool_call").length,errors=info.filter(x=>x.error).length;
- return <main style={s.page}>
-  <div style={s.eyebrow}>AssetOpsBench timeline view</div><div style={s.head}><div><h1 style={s.h1}>{d.title}</h1><p style={s.q}><b>Task:</b> {d.question}</p></div><div>{Object.keys(DATA).map(k=><button key={k} onClick={()=>{setId(k);setPick(0)}} style={{...s.btn,...(id===k?s.active:{})}}>Scenario {k}</button>)}</div></div>
-  <section style={s.stats}><div><b>{tools}</b><span>tool calls</span></div><div><b>{errors}</b><span>tool problems</span></div><div><b>{states.length}</b><span>belief findings</span></div><div><b>yes</b><span>final answer</span></div></section>
-  <section style={s.find}><b>What this trace teaches us</b><br/>{d.finding}</section>
-  <div style={s.grid}><section><h2>Trace timeline</h2><ol style={s.timeline}>{d.events.map((x,i)=><li key={x.source_trace} style={s.item}><button onClick={()=>setPick(i)} style={{...s.event,...(i===pick?s.selected:{}),...(info[i].error?s.error:{})}}><code>{String(i+1).padStart(2,"0")}</code><span><b>{x.action==="tool_call"?x.target:"Final answer"}</b> <Chip bad={info[i].error} good={x.action==="final_answer"}>{info[i].error?"problem":x.action}</Chip><small>{info[i].summary}</small></span></button></li>)}</ol></section>
-  <aside style={s.detail}><h2>Selected event</h2><p><b>Agent:</b> {ev.agent}<br/><b>Action:</b> {ev.action}<br/><b>Target:</b> {ev.target}</p>{detail.input&&<><h3>Tool input</h3><Block value={detail.input}/></>}<h3>{ev.action==="final_answer"?"Final answer":"Tool output"}</h3><Block value={detail.output}/><small><b>Source:</b> {ev.source_trace}</small></aside></div>
-  <section style={s.beliefs}><h2>What we can and cannot conclude</h2><div style={s.cards}>{states.map((x,i)=><article key={i} style={{...s.card,borderTopColor:x.state_value==="TRUE"?"#22c55e":"#f59e0b"}}><Chip good={x.state_value==="TRUE"} bad={x.state_value!=="TRUE"}>{x.state_value}</Chip><h3>{x.proposition}</h3><p>{x.reason}</p><code>evidence: {x.evidence_for_state.join(", ")}</code></article>)}</div><p style={s.unknown}><b>Not recorded:</b> {d.beliefs.schema_validation.not_observable_here.join(" · ")}</p></section>
- </main>
+function eventInfo(event) {
+  if (event.action === "final_answer") return { label: "Final answer", status: "answer", output: event.message };
+  try {
+    const wrapped = JSON.parse(event.message);
+    const raw = Array.isArray(wrapped.output) ? wrapped.output.map(x => x.text || "").join("\n") : String(wrapped.output || "");
+    const output = JSON.parse(raw);
+    return { label: event.target, status: output.error ? "error" : "ok", input: wrapped.input, output };
+  } catch { return { label: event.target, status: "unknown", output: event.message }; }
 }
-const s={page:{maxWidth:1180,margin:"auto",padding:"28px 20px",color:"#172033"},eyebrow:{fontSize:12,fontWeight:700,color:"#64748b",textTransform:"uppercase"},head:{display:"flex",justifyContent:"space-between",gap:18,flexWrap:"wrap"},h1:{margin:"7px 0",fontSize:27},q:{margin:0,color:"#475569"},btn:{padding:"8px 12px",marginLeft:8,border:"1px solid #cbd5e1",borderRadius:6,background:"white",fontWeight:700,cursor:"pointer"},active:{background:"#2563eb",color:"white",borderColor:"#2563eb"},stats:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",border:"1px solid #dbeafe",borderRadius:8,overflow:"hidden",margin:"24px 0 14px"},find:{background:"#eff6ff",borderLeft:"4px solid #2563eb",padding:14,lineHeight:1.5,marginBottom:24},grid:{display:"block"},timeline:{display:"flex",gap:14,listStyle:"none",padding:"10px 3px 18px",margin:0,overflowX:"auto",borderBottom:"3px solid #bfdbfe"},item:{minWidth:220,maxWidth:260,position:"relative"},event:{width:"100%",minHeight:128,textAlign:"left",display:"flex",gap:11,border:"1px solid #e2e8f0",background:"white",borderRadius:7,padding:11,cursor:"pointer"},selected:{outline:"2px solid #93c5fd"},error:{borderTop:"4px solid #dc2626"},chip:{display:"inline-block",fontSize:10,fontWeight:700,padding:"2px 6px",marginLeft:6,borderRadius:999,background:"#e2e8f0"},bad:{background:"#fee2e2",color:"#b91c1c"},good:{background:"#dcfce7",color:"#15803d"},detail:{marginTop:22,background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:16},code:{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxHeight:260,overflow:"auto",background:"#0f172a",color:"#e2e8f0",padding:12,borderRadius:6,fontSize:11},beliefs:{marginTop:30},cards:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:12},card:{border:"1px solid #e2e8f0",borderTop:"4px solid",borderRadius:8,padding:14},unknown:{background:"#fffbeb",padding:12,color:"#713f12"}};
+
+export default function AssetOpsTimeline() {
+  const [id, setId] = useState("607");
+  const [selected, setSelected] = useState(0);
+  const trace = traces[id];
+  const items = useMemo(() => trace.events.map(eventInfo), [trace]);
+  const current = items[selected];
+
+  return <main style={s.page}>
+    <header style={s.header}>
+      <div>
+        <div style={s.kicker}>AssetOpsBench trace</div>
+        <h1 style={s.title}>Scenario {id}</h1>
+        <p style={s.task}>{trace.task}</p>
+      </div>
+      <div style={s.tabs} aria-label="Scenario selection">
+        {Object.keys(traces).map(key => <button key={key} onClick={() => { setId(key); setSelected(0); }} style={{ ...s.tab, ...(key === id ? s.activeTab : {}) }}>Scenario {key}</button>)}
+      </div>
+    </header>
+
+    <section aria-label="Events in order">
+      <p style={s.hint}>Read left to right. Click a step to see what happened.</p>
+      <div style={s.track}>
+        {items.map((item, index) => <button key={trace.events[index].source_trace} onClick={() => setSelected(index)} style={{ ...s.step, ...(selected === index ? s.selected : {}), ...(item.status === "error" ? s.error : {}), ...(item.status === "answer" ? s.answer : {}) }}>
+          <span style={s.number}>{index + 1}</span>
+          <span style={s.stepLabel}>{item.label}</span>
+          <span style={s.status}>{item.status === "error" ? "failed" : item.status === "answer" ? "answer" : "done"}</span>
+        </button>)}
+      </div>
+    </section>
+
+    <section style={s.detail} aria-label="Selected step detail">
+      <div style={s.detailTop}><span>Step {selected + 1}</span><strong>{current.label}</strong></div>
+      {current.input && <div><h2 style={s.detailLabel}>Input</h2><pre style={s.code}>{JSON.stringify(current.input, null, 2)}</pre></div>}
+      <div><h2 style={s.detailLabel}>{current.status === "answer" ? "Answer" : "Result"}</h2><pre style={s.code}>{typeof current.output === "string" ? current.output : JSON.stringify(current.output, null, 2)}</pre></div>
+    </section>
+  </main>;
+}
+
+const s = {
+  page: { maxWidth: 980, margin: "0 auto", padding: "42px 24px", color: "#172033" },
+  header: { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 40 },
+  kicker: { fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em", color: "#64748b" },
+  title: { fontSize: 32, margin: "7px 0" }, task: { margin: 0, color: "#475569", fontSize: 16, maxWidth: 610, lineHeight: 1.5 },
+  tabs: { display: "flex", border: "1px solid #d1d5db", borderRadius: 7, overflow: "hidden" }, tab: { border: 0, borderRight: "1px solid #d1d5db", background: "#fff", padding: "9px 12px", cursor: "pointer", color: "#475569", fontWeight: 600 }, activeTab: { background: "#172033", color: "#fff" },
+  hint: { color: "#64748b", fontSize: 13, marginBottom: 12 }, track: { display: "flex", gap: 0, overflowX: "auto", padding: "10px 0 26px" },
+  step: { minWidth: 142, flex: "1 0 142px", minHeight: 112, padding: 14, textAlign: "left", cursor: "pointer", border: "1px solid #d1d5db", borderRight: 0, background: "#fff", color: "#172033", display: "flex", flexDirection: "column", gap: 7 }, selected: { background: "#eff6ff", outline: "2px solid #2563eb", outlineOffset: -2, zIndex: 1 }, error: { borderTop: "4px solid #dc2626" }, answer: { borderTop: "4px solid #15803d" },
+  number: { color: "#94a3b8", fontFamily: "monospace", fontSize: 12 }, stepLabel: { fontWeight: 700, overflowWrap: "anywhere" }, status: { color: "#64748b", fontSize: 12, marginTop: "auto" },
+  detail: { borderTop: "1px solid #d1d5db", paddingTop: 24, maxWidth: 760 }, detailTop: { display: "flex", gap: 12, alignItems: "baseline", color: "#64748b", fontSize: 13, marginBottom: 16 }, detailLabel: { fontSize: 13, margin: "16px 0 7px", color: "#475569" }, code: { margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 320, overflowY: "auto", padding: 14, borderRadius: 6, background: "#f1f5f9", color: "#172033", fontSize: 12, lineHeight: 1.5 },
+};
