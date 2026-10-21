@@ -1,111 +1,27 @@
 import { useMemo, useState } from "react";
-import scenario607 from "../runs/assetopsbench/assetops-607-events.json";
-import scenario620 from "../runs/assetopsbench/assetops-620-events.json";
+import e607 from "../runs/assetopsbench/assetops-607-events.json";
+import e620 from "../runs/assetopsbench/assetops-620-events.json";
+import b607 from "../runs/assetopsbench/assetops-607-beliefs.json";
+import b620 from "../runs/assetopsbench/assetops-620-beliefs.json";
 
-const SCENARIOS = {
-  "607": {
-    title: "Scenario 607 — failure modes and sensors",
-    note: "Two Chiller failure-mode lookups fail; the agent later uses pump data, which does not prove a Chiller fact.",
-    events: scenario607,
-  },
-  "620": {
-    title: "Scenario 620 — anomaly-model sensors",
-    note: "The agent looks up installed sensors, measured sensors, and the available date range before answering.",
-    events: scenario620,
-  },
+const DATA={
+  "607":{title:"Scenario 607 — failure modes and sensors",question:"Find Chiller 6 failure modes at MAIN that available sensors can monitor.",finding:"The agent gets Chiller-specific sensor evidence, but both Chiller failure-mode requests fail. Pump modes do not prove a Chiller fact.",events:e607,beliefs:b607},
+  "620":{title:"Scenario 620 — anomaly-model sensors",question:"Recommend sensors and temporal behavior for detecting a Chiller 6 trip.",finding:"The answer is supported for sensor availability and date coverage. It does not test whether any sensor detects a chiller trip.",events:e620,beliefs:b620},
 };
+function decode(e){if(e.action==="final_answer")return{input:null,output:e.message,summary:e.message,error:false};try{const p=JSON.parse(e.message),raw=Array.isArray(p.output)?p.output.map(x=>x.text||"").join("\n"):String(p.output||""),out=JSON.parse(raw);return{input:p.input||{},output:out,summary:out.error||out.message||raw.slice(0,150),error:Boolean(out.error)}}catch{return{input:null,output:e.message,summary:e.message.slice(0,150),error:/error/i.test(e.message)}}}
+const Block=({value})=><pre style={s.code}>{typeof value==="string"?value:JSON.stringify(value,null,2)}</pre>;
+const Chip=({children,bad,good})=><span style={{...s.chip,...(bad?s.bad:good?s.good:{})}}>{children}</span>;
 
-function unpack(event) {
-  if (event.action === "final_answer") return { summary: event.message, error: false };
-  try {
-    const payload = JSON.parse(event.message);
-    const output = Array.isArray(payload.output) ? payload.output.map(x => x.text || "").join("\n") : String(payload.output || "");
-    const parsed = JSON.parse(output);
-    if (parsed.error) return { summary: parsed.error, error: true };
-    return { summary: parsed.message || output.slice(0, 180), error: false };
-  } catch {
-    return { summary: event.message.slice(0, 180), error: /error/i.test(event.message) };
-  }
+export default function AssetOpsTimeline(){
+ const [id,setId]=useState("607"),[pick,setPick]=useState(0);const d=DATA[id],info=useMemo(()=>d.events.map(decode),[d]);const ev=d.events[pick]||d.events[0],detail=info[pick]||info[0],states=d.beliefs.belief_timeline||[];
+ const tools=d.events.filter(x=>x.action==="tool_call").length,errors=info.filter(x=>x.error).length;
+ return <main style={s.page}>
+  <div style={s.eyebrow}>AssetOpsBench investigation view</div><div style={s.head}><div><h1 style={s.h1}>{d.title}</h1><p style={s.q}><b>Task:</b> {d.question}</p></div><div>{Object.keys(DATA).map(k=><button key={k} onClick={()=>{setId(k);setPick(0)}} style={{...s.btn,...(id===k?s.active:{})}}>Scenario {k}</button>)}</div></div>
+  <section style={s.stats}><div><b>{tools}</b><span>tool calls</span></div><div><b>{errors}</b><span>tool problems</span></div><div><b>{states.length}</b><span>belief findings</span></div><div><b>yes</b><span>final answer</span></div></section>
+  <section style={s.find}><b>What this trace teaches us</b><br/>{d.finding}</section>
+  <div style={s.grid}><section><h2>Trace timeline</h2><ol style={s.timeline}>{d.events.map((x,i)=><li key={x.source_trace} style={s.item}><button onClick={()=>setPick(i)} style={{...s.event,...(i===pick?s.selected:{}),...(info[i].error?s.error:{})}}><code>{String(i+1).padStart(2,"0")}</code><span><b>{x.action==="tool_call"?x.target:"Final answer"}</b> <Chip bad={info[i].error} good={x.action==="final_answer"}>{info[i].error?"problem":x.action}</Chip><small>{info[i].summary}</small></span></button></li>)}</ol></section>
+  <aside style={s.detail}><h2>Selected event</h2><p><b>Agent:</b> {ev.agent}<br/><b>Action:</b> {ev.action}<br/><b>Target:</b> {ev.target}</p>{detail.input&&<><h3>Tool input</h3><Block value={detail.input}/></>}<h3>{ev.action==="final_answer"?"Final answer":"Tool output"}</h3><Block value={detail.output}/><small><b>Source:</b> {ev.source_trace}</small></aside></div>
+  <section style={s.beliefs}><h2>What we can and cannot conclude</h2><div style={s.cards}>{states.map((x,i)=><article key={i} style={{...s.card,borderTopColor:x.state_value==="TRUE"?"#22c55e":"#f59e0b"}}><Chip good={x.state_value==="TRUE"} bad={x.state_value!=="TRUE"}>{x.state_value}</Chip><h3>{x.proposition}</h3><p>{x.reason}</p><code>evidence: {x.evidence_for_state.join(", ")}</code></article>)}</div><p style={s.unknown}><b>Not recorded:</b> {d.beliefs.schema_validation.not_observable_here.join(" · ")}</p></section>
+ </main>
 }
-
-function shortPointer(source) {
-  return source.replace("assetopsbench:", "").replace("/trajectory/", "…/");
-}
-
-export default function AssetOpsTimeline() {
-  const [scenarioId, setScenarioId] = useState("607");
-  const [selected, setSelected] = useState(0);
-  const scenario = SCENARIOS[scenarioId];
-  const events = scenario.events;
-  const current = events[selected] || events[0];
-  const summary = useMemo(() => events.map(unpack), [events]);
-
-  return <main style={styles.page}>
-    <div style={styles.eyebrow}>AssetOpsBench trace viewer</div>
-    <h1 style={styles.title}>{scenario.title}</h1>
-    <p style={styles.note}>{scenario.note}</p>
-
-    <div style={styles.switcher} aria-label="Choose AssetOpsBench scenario">
-      {Object.keys(SCENARIOS).map(id => <button key={id} onClick={() => { setScenarioId(id); setSelected(0); }} style={{...styles.scenarioButton, ...(scenarioId === id ? styles.scenarioActive : {})}}>
-        Scenario {id}
-      </button>)}
-    </div>
-
-    <div style={styles.grid}>
-      <section aria-label="Trace events">
-        <div style={styles.sectionTitle}>{events.length} recorded events</div>
-        <ol style={styles.timeline}>
-          {events.map((event, index) => {
-            const item = summary[index];
-            const active = index === selected;
-            return <li key={event.source_trace} style={styles.item}>
-              <button onClick={() => setSelected(index)} style={{...styles.eventButton, ...(active ? styles.eventActive : {}), ...(item.error ? styles.eventError : {})}}>
-                <span style={styles.index}>{index + 1}</span>
-                <span style={styles.eventMain}>
-                  <strong>{event.action === "tool_call" ? event.target : "Final answer"}</strong>
-                  <span style={styles.summary}>{item.summary}</span>
-                </span>
-                {item.error && <span style={styles.errorLabel}>tool problem</span>}
-              </button>
-            </li>;
-          })}
-        </ol>
-      </section>
-
-      <aside style={styles.detail} aria-label="Selected event details">
-        <div style={styles.sectionTitle}>Selected event</div>
-        <p><b>Agent:</b> {current.agent}</p>
-        <p><b>Action:</b> {current.action}</p>
-        <p><b>Target:</b> {current.target}</p>
-        <p><b>Source:</b> <code style={styles.code}>{shortPointer(current.source_trace)}</code></p>
-        <div style={styles.messageLabel}>Recorded message</div>
-        <pre style={styles.message}>{current.message}</pre>
-      </aside>
-    </div>
-  </main>;
-}
-
-const styles = {
-  page: { maxWidth: 1040, margin: "0 auto", padding: "28px 20px 48px", color: "#172033" },
-  eyebrow: { color: "#64748b", fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase" },
-  title: { fontSize: 26, margin: "8px 0" },
-  note: { margin: "0 0 18px", color: "#475569", maxWidth: 760, lineHeight: 1.5 },
-  switcher: { display: "flex", gap: 8, marginBottom: 24 },
-  scenarioButton: { cursor: "pointer", border: "1px solid #cbd5e1", background: "#fff", color: "#334155", borderRadius: 6, padding: "8px 12px", fontWeight: 600 },
-  scenarioActive: { background: "#2563eb", color: "#fff", borderColor: "#2563eb" },
-  grid: { display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(300px, .9fr)", gap: 22, alignItems: "start" },
-  sectionTitle: { fontSize: 13, fontWeight: 700, color: "#475569", marginBottom: 10 },
-  timeline: { listStyle: "none", padding: 0, margin: 0, borderLeft: "2px solid #dbeafe" },
-  item: { position: "relative", marginLeft: 14, marginBottom: 9 },
-  eventButton: { width: "100%", textAlign: "left", cursor: "pointer", display: "flex", gap: 10, alignItems: "flex-start", border: "1px solid #e2e8f0", background: "#fff", borderRadius: 7, padding: 10, color: "#172033" },
-  eventActive: { borderColor: "#2563eb", boxShadow: "0 0 0 2px #dbeafe" },
-  eventError: { borderLeft: "4px solid #dc2626" },
-  index: { flex: "0 0 auto", color: "#64748b", fontSize: 12, fontFamily: "monospace", paddingTop: 2 },
-  eventMain: { minWidth: 0, display: "grid", gap: 3 },
-  summary: { color: "#475569", fontSize: 13, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis" },
-  errorLabel: { marginLeft: "auto", flex: "0 0 auto", color: "#b91c1c", fontSize: 11, fontWeight: 700 },
-  detail: { border: "1px solid #e2e8f0", borderRadius: 8, padding: 16, background: "#f8fafc", fontSize: 13, lineHeight: 1.45, position: "sticky", top: 12 },
-  code: { fontSize: 11, overflowWrap: "anywhere" },
-  messageLabel: { fontWeight: 700, marginTop: 14, marginBottom: 6 },
-  message: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 390, overflowY: "auto", background: "#0f172a", color: "#e2e8f0", padding: 12, borderRadius: 6, fontSize: 11, lineHeight: 1.4 },
-};
+const s={page:{maxWidth:1180,margin:"auto",padding:"28px 20px",color:"#172033"},eyebrow:{fontSize:12,fontWeight:700,color:"#64748b",textTransform:"uppercase"},head:{display:"flex",justifyContent:"space-between",gap:18,flexWrap:"wrap"},h1:{margin:"7px 0",fontSize:27},q:{margin:0,color:"#475569"},btn:{padding:"8px 12px",marginLeft:8,border:"1px solid #cbd5e1",borderRadius:6,background:"white",fontWeight:700,cursor:"pointer"},active:{background:"#2563eb",color:"white",borderColor:"#2563eb"},stats:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",border:"1px solid #dbeafe",borderRadius:8,overflow:"hidden",margin:"24px 0 14px"},find:{background:"#eff6ff",borderLeft:"4px solid #2563eb",padding:14,lineHeight:1.5,marginBottom:24},grid:{display:"grid",gridTemplateColumns:"minmax(0,1.1fr) minmax(340px,.9fr)",gap:22,alignItems:"start"},timeline:{listStyle:"none",padding:0,borderLeft:"2px solid #bfdbfe"},item:{margin:"0 0 10px 14px"},event:{width:"100%",textAlign:"left",display:"flex",gap:11,border:"1px solid #e2e8f0",background:"white",borderRadius:7,padding:11,cursor:"pointer"},selected:{outline:"2px solid #93c5fd"},error:{borderLeft:"4px solid #dc2626"},chip:{display:"inline-block",fontSize:10,fontWeight:700,padding:"2px 6px",marginLeft:6,borderRadius:999,background:"#e2e8f0"},bad:{background:"#fee2e2",color:"#b91c1c"},good:{background:"#dcfce7",color:"#15803d"},detail:{position:"sticky",top:12,background:"#f8fafc",border:"1px solid #e2e8f0",borderRadius:8,padding:16},code:{whiteSpace:"pre-wrap",overflowWrap:"anywhere",maxHeight:260,overflow:"auto",background:"#0f172a",color:"#e2e8f0",padding:12,borderRadius:6,fontSize:11},beliefs:{marginTop:30},cards:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:12},card:{border:"1px solid #e2e8f0",borderTop:"4px solid",borderRadius:8,padding:14},unknown:{background:"#fffbeb",padding:12,color:"#713f12"}};
