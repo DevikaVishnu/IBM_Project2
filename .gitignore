@@ -6,6 +6,8 @@ dist/
 
 # Editor / OS cruft
 .DS_Store
+__pycache__/
+*.pyc
 
 # MAST/MAD dataset (fetched via data/mast/fetch.sh)
 data/mast/*.json
