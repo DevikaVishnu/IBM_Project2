@@ -1,7 +1,8 @@
 # agenttrace-viz-profile/0.1: JSON serialization profile for agenttrace.semantic/0.3
 
-Status: **DRAFT, revision 2.**
+Status: **DRAFT, revision 3.**
 - Revision 2 applies the schema-auditor corrections M1–M3 and m1–m9, and records the user's decisions D1–D6.
+- Revision 3 (2026-10-20) revises D1: start order, observed precedence and overlap, and delegation provenance (Order, §4.1).
 - This profile is not part of the canonical schema.
 
 What the profile does:
@@ -133,10 +134,24 @@ Rules:
 - **D4:** the ChatDev rule assumes one model call per utterance. Each fixture records it in `profile_local.assumptions` with `basis: INF`.
 - The boundary rule used for each source is recorded in `profile_local.extraction`.
 
-**Order [PROFILE-LOCAL] (D1, m2).**
-- `order` is a unique integer forming a strict total order that follows the observable raw sequence. Gaps are allowed.
+**Order [PROFILE-LOCAL] (D1 rev 3, m2).**
+- `order` is a unique integer: the raw seq of the event's first raw record (start order). Gaps are allowed. It is a valid "temporal order" (§4.3).
 - `$unresolved` is **not** permitted on `order`.
-- Raw traces that show parallel events, or whose sequence can't be determined, are **excluded** from the initial fixtures, because partial order is DEFERRED (§4.3, §12).
+- `order` is observation order only. `order(X) < order(Y)` alone never establishes that X preceded, caused or enabled Y, or that Y reiterated X (§11).
+- **Spans.** Each event's `raw_ref` carries `start_seq` and `end_seq`. An event with a start record and no end record is open: its span runs to the end of the trace.
+- **Observed precedence** [PROFILE-LOCAL], a conservative reading of the partial order 0.3 defers (§4.3, §12): X precedes Y iff `end_seq(X) < start_seq(Y)`.
+- **Overlap.** Events whose spans intersect, including containment (a `task` tool event spans its subagent's events), are **overlapping observations**. Overlap records only that the spans intersect in the raw sequence. It is **not** evidence of simultaneous execution, and it supports no precedence between the events.
+- `profile_local.order` records `basis: "first_raw_seq"` and lists every overlapping event pair.
+- **Where 0.3 requires precedence** (§5.3 producer-precedes-E and tie rule; §10.5 Reiteration), the profile requires observed precedence:
+  - a stored link whose structural check depends on precedence that is not observed fails the check and is not stored;
+  - a §5.3(b) tie span whose precedence can't be determined supports no link and is recorded in `profile_local.ambiguities`;
+  - an inference whose precedence condition is not observed, or that would rely on the absence of a link withheld under this rule, takes its own non-committal value: UNKNOWN where the inference defines it (for example §10.5), and "not established" for Lineage (§10.3), which has no UNKNOWN value.
+- This is strictly more conservative than 0.3: observed precedence implies order precedence, so the rule can only turn a 0.3 pass into a failure, UNKNOWN or "not established", never the reverse.
+- **Delegation provenance.** Producer, carrier and recipient are kept separate:
+  - **producer:** the parent's model event is `produced_by` of delegation arguments only where raw provenance establishes it (the arguments first observably occur in that event's output, for example its `tool_calls[]`). Otherwise `produced_by` is `$unresolved`, with an entry in `profile_local.ambiguities`;
+  - **carrier:** the `task` tool event transports the arguments and is never recorded as their producer;
+  - **recipient:** a subagent model event receives them only through a stored `delivers`, which requires an observed occurrence in its rendered input (§5.1). Delivery is never derived from the delegation, the carrier, `order` or precedence.
+- Raw traces whose start sequence can't be determined remain **excluded** from fixtures.
 
 **Evidence boundaries.**
 - Follow §4.4: one item per unit that can be produced and delivered on its own. A rendered prompt is never one item.
@@ -202,7 +217,7 @@ Consequences:
 |---|---|---|
 | `delivers` | evt → evd | The source event's `origin` is an agent entity, making it an agent-input event (§4.3, §5.1). `raw_ref` names the occurrence in the rendered input |
 | `checks` | evt → prp | `raw_ref` names the grounding: evaluator text, executed check, or framework procedure. It is never a bare verdict or the instruction itself (§5.2) |
-| `propagates_to` | evd A → evd B | B has a `produced_by` E, and a stored `delivers(E, A)` exists (§5.3 conditions 1–2). A ≠ B, and if A has a producer it comes before E in `order`. `raw_ref` = `{"in_target": [...], "in_source": [...]}` |
+| `propagates_to` | evd A → evd B | B has a `produced_by` E, and a stored `delivers(E, A)` exists (§5.3 conditions 1–2). A ≠ B, and if A has a producer it observably precedes E (Order, observed precedence). `raw_ref` = `{"in_target": [...], "in_source": [...]}` |
 | `depends_on` | prp → prp | none beyond endpoint kinds (§5.4) |
 | `supported_by`, `contradicted_by` | prp → evd | `raw_ref` names the grounding spans, or `whole_item` for absence-grounded links. No grounding span may be a claim span that asserts P or ¬P (§5.5, §5.6) |
 
@@ -248,11 +263,11 @@ Consequences:
 
 | ID | Decision | Status |
 |---|---|---|
-| D1 | Parallel or undeterminable raw order | **Decided:** such traces are excluded from initial fixtures. There is no `$unresolved` on `order` |
+| D1 | Parallel or undeterminable raw order | **Decided (rev 3):** `order` = first raw seq, observation order only. Spans in `raw_ref`, overlaps in `profile_local.order`, observed precedence where 0.3 requires precedence, otherwise UNKNOWN or ambiguity. Only traces whose start sequence can't be determined are excluded. There is no `$unresolved` on `order` |
 | D2 | Provenance of a derived proposition | **Decided:** `requirement_text`, `argument_item` and `claim_text` source anchors. The derivation goes in `profile_local.derivations`. Anchors establish nothing semantic, and no new relation is added |
 | D3 | Form grammar and identity | **Decided:** syntactic identity with deterministic argument order. Duplicates that are logically equivalent are fixture defects |
 | D4 | One event per ChatDev utterance | **Decided:** a PROFILE-LOCAL boundary rule with an inferred (`INF`) assumption per fixture |
 | D5 | Negation and hedging | **Provisional:** conventions as in §4.2. C2 normalization is labeled profile-derived, and synthetic tests are labeled synthetic |
 | D6 | Predicate vocabulary | **Decided:** the required `vocabulary` companion block |
 
-**Changes to canonical semantics: none were required.** Every correction is a tag, a serialization rule, or a restatement of 0.3.
+**Changes to canonical semantics: none were required.** Every correction is a tag, a serialization rule, or a restatement of 0.3. D1 rev 3's observed precedence is a PROFILE-LOCAL, strictly more conservative reading of 0.3's deferred partial order (§12), not a change to 0.3.

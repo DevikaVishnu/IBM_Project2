@@ -1,0 +1,15 @@
+/* AgentTrace demo: keyboard focus must always be visible (inline styles cannot express :focus-visible). */
+.at-demo :focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.at-demo [data-testid="matrix-grid"]:focus-visible {
+  outline-offset: -3px;
+}
+.at-demo summary:focus-visible {
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .at-demo * { scroll-behavior: auto !important; }
+}

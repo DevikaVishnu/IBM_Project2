@@ -1,8 +1,151 @@
 # Research state
 
-Last updated 2026-10-20. Source: the checkpoint linked below (its §-numbers are cited as "ckpt §N").
+Last updated 2026-10-22. Source: the checkpoint linked below (its §-numbers are cited as "ckpt §N").
 
-## Handoff (2026-10-20, latest): O2/O3 committed, extraction audit done, E1–E4 recommended, work preserved
+## Handoff (2026-10-22, latest): IBM demo viewer built locally; nothing committed
+
+**Objective.** Hold an IBM Research Belief Explorer demo on **2026-10-28**. Our team's scope is cognitive observability (not Trace Explorer, and not the persona-based Decision Explorer). The demo shows what agents saw, what they asserted and how that compares with delivered evidence. Every value is read-only, offline and reproducible.
+
+**Status.**
+- **The demo works locally** in the AP viewer, tab `#demo` (`npm run dev`).
+- **Not committed:** AP branch `feature/automated-semantic-extraction`, no staging or push.
+- **No model call, paid run or raw-trace change.** Schema 0.3, the fixtures and the adapter are unchanged.
+- **Reported by the user, not re-run here:** adapter increment 2 is at `b9e09f6` on the fork, 608 no-model tests passed, the schema-auditor and trace-analyst approved it, and structural adapter work is feature-frozen unless evaluation finds defects.
+
+### Demo modes
+1. **Observation matrix · scenario_3 B.**
+   - Rows are the agents the trace actually records: `root` and `sub-1` (general-purpose), plus an "unresolved" row for call 383. Columns are the 71 model calls in observation order.
+   - It shows the delegation (92 → 96, `delegation_id` join), 4,713 structural deliveries, and fixture-B links reproduced 5/5.
+   - Every cell reads "observed, no semantic claim extracted".
+2. **State vs evidence · 621 / 620.**
+   - 621: R → `delivers` → `llm:157` → claim span in `llm_end` 158 → O3 **AGREES**.
+   - 620: O3 **UNKNOWN**, shown as "insufficient evidence, not a contradiction".
+   - All 7 computed results match the hand-written expected results.
+
+### Files
+| File | Status |
+|---|---|
+| `src/main.jsx` | modified (tracked): demo tab, `#demo` / `#timeline` URL hash, fixed-viewport shell |
+| `src/demo/{DemoTab,MatrixView,CompareView,ui}.jsx`, `demo.css`, `README.md` | untracked, new |
+| `src/demo/data/{aob-621,aob-620f}.demo.json`, `aob-sc3-B.matrix.json` | untracked, generated. They contain model-output excerpts, a 1,331-char tool result and ≤ 800-char tool excerpts; no secrets and no complete model inputs |
+| `scripts/demo/build_demo_data.py`, `build_matrix_data.py` | untracked; offline builders that import the worktree adapter and compare module at `b9e09f6` |
+| `local/demo-screenshots/*.png` | **local-only** (`.gitignore /local/`) |
+| `docs/experiments/stage3-pilot-20261021/` | **local-only** (`.git/info/exclude`): Stage 3 blank two-annotator pilot package, untouched |
+
+`DemoView.jsx` was replaced by `CompareView.jsx`. The legacy Belief Evolution and Timeline + Graph tabs are unchanged.
+
+### Checks [OBS 2026-10-22]
+- `npm run build` passes. It warns that the 683 KB bundle exceeds the 500 KB chunk limit.
+- `npm run lint` fails repo-wide, because there is no ESLint config (this predates the demo). The demo files pass with a temporary flat config.
+- Playwright at 1920×1080 and 1366×768: no page scroll, no horizontal overflow, console clean.
+- **Simulated zoom, not real browser zoom.** These viewports were resized to stand in for 125–200% zoom: 1536×864, 1280×720, 960×540, 1093×614, 911×512 and 683×384. At each one:
+  - layout reflows with no clipping and all controls are reachable;
+  - matrix columns stay at 28 px or more, with sticky agent labels;
+  - keyboard navigation and the jump buttons work, and the claim highlights are visible.
+- **Not tested:** real Chrome/Safari zoom, a screen reader, or a projector.
+
+### Remaining tasks
+- **UI:** small event-strip mouse targets; the inspector sits far below the matrix at 200%; the 621/620 run choice isn't kept in the URL; bundle size.
+- **Recording:** rehearse a 4–5 minute walkthrough, then record it.
+- **Licensing:** confirm the AssetOpsBench data licence allows publishing the excerpts before committing the demo JSON.
+- **Reproducibility:** the builders need the untracked local traces and the worktree `.venv`. Decide what to commit and fix the repo ESLint config.
+- **STATE gap:** the increment 2 results table (above it, the increment 1 table) has not been updated.
+
+### Research limitations (unchanged by the demo)
+- No specialist (IoT, TSFM, FMSR or Work Order) participated in any run; sc3-B has only root and a general-purpose sub-agent.
+- No cross-agent belief divergence has been verified. The demo shows agreement (621) and abstention (620), never a contradiction.
+- Claims and states are hand-grounded (fixture claim gold exists only for 621 and 620). There is no automated semantic extraction, and the Stage 3 contract has only been piloted as a blank package; annotator 2 is not named.
+
+### Next task (one)
+**Rehearse the `#demo` walkthrough in a real browser** (Chrome at 100, 125, 150 and 200% zoom, keyboard only, plus a VoiceOver spot check). Fix only blocking issues and write a 4–5 minute script. No commits until the licensing check is done.
+
+## Handoff (2026-10-20, superseded by the section above): adapter increment 1 pushed to fork; viz-profile D1 rev 3 written
+
+**Status.**
+- No model call, agent run, database access or paid experiment.
+- Schema 0.3 (`2273d210…`), the hand-grounded fixtures and the raw traces are unchanged. The viz profile was revised only for D1 rev 3 (below). The 621 (`aa8531f2…`) and sc3 (`4d575909…`) traces were re-hashed to confirm [OBS].
+- **Commit:** fork worktree `AssetOpsBench-agenttrace-spec`, branch `research/agenttrace-specialists`, `c194233` "feat(deep_agent): add deterministic AgentTrace structural adapter and verifier". Pushed on 2026-10-20 to `fork` (`DevikaVishnu/AssetOpsBench`), branch `research/agenttrace-specialists`, fast-forward `324de44..c194233`. `git ls-remote fork` shows `c194233` [OBS]. Not merged and not in any PR. `origin` (IBM) is untouched.
+- **Files:**
+  - `src/agent/deep_agent/_semantic_adapter.py` (adapter);
+  - `_semantic_verify.py` (independent verifier);
+  - `_semantic_locator.py` (the only shared code: locator and hash resolver);
+  - `tests/test_semantic_adapter.py`.
+- **Worktree suite: 557 passed** [OBS]. That is the 440 before this work plus 117 adapter tests. Same command as below.
+
+### Decisions applied (user-approved 2026-10-20)
+- **E1:** `order` = the seq of the event's first raw record, as observation order only. Start and end seqs are in `raw_ref`. `profile_local.adapter.order` carries the caveat that overlapping events support no precedence, causation or reiteration, plus the list of overlaps. 0.3 is unchanged.
+- **E2/E3 deferred:** eviction substitutes, the question and system prompts are recorded as skipped items with reasons.
+- **E4:** code location as above. The verifier shares only `_semantic_locator`.
+- **Agent-origin attribution.** `llm_start.agent_id` comes from the capture's walk of the LangChain run tree (`_subagent_capture.on_chat_model_start`: `_owner(parent_run_id)`), so it is [INF], never [OBS].
+  - **`offered_tools` present and non-null:** agent origin [INF] (rule `offered_tools_present`).
+  - **`offered_tools` absent:** agent origin [INF] only if `agent_loop_signature` holds:
+    - the parent run is unique among model calls;
+    - message 0 equals the system message of the agent's first call;
+    - continuity: the first call is system + human messages only; every later call extends the previous established call's input, then its output (role, content and tool_calls), then exactly one tool message per tool call, in order.
+  - Post-summary calls fail continuity, and so does every later call of that agent.
+  - **Every other paired call is kept** as an event with origin `$unresolved`. Candidates are the raw agents, `framework:deepagents` and `$absent`. The rules are `no_rendered_input`, `offered_tools_null`, `agent_loop_signature_failed` and `agent_id_unattributed`.
+    - Each call keeps its order, input/output locators and digests. Its argument evidence gets source `$unresolved` (agent, framework); that two-candidate set is an extractor choice.
+    - Each `$unresolved` has a `profile_local.ambiguities` entry, and `conformance.canonical_complete` is false.
+    - These events source no `delivers`, claims, states or uptake. O2 returns UNRESOLVED for them.
+  - **The refused call 416** (no `llm_end`) is not an event. Its `model_call_unpaired` skip keeps `raw_agent_id` and `input_locator`.
+
+### Results [OBS]
+
+| Run | Events (agent / unresolved / tool) | Evidence (results / args / unresolved args) | Delivers |
+|---|---|---|---|
+| 620-fileobs | 21 (7 / 0 / 14) | 43 (14 / 29 / 0) | 172 |
+| 621 | 58 (24 / 0 / 34) | 123 (34 / 89 / 0) | 1376 |
+| sc3 | 153 (70 / 1 = call 383 / 82) | 261 (82 / 179 / 0) | 4546 |
+| 607 | 17 (0 / 7 / 10) | 23 (10 / 0 / 13) | 0 |
+| 612 | 15 (0 / 6 / 9) | 21 (9 / 0 / 12) | 0 |
+| 615 | 15 (0 / 5 / 10) | 23 (10 / 0 / 13) | 0 |
+| 617 | 29 (0 / 11 / 18) | 47 (18 / 0 / 29) | 0 |
+| 620-1005 | 33 (0 / 11 / 22) | 64 (22 / 0 / 42) | 0 |
+
+- **Hand-grounded links recovered:**
+  - 621: 2/2, first delivery of R at 125;
+  - sc3: 5/5, all first deliveries (D at 96 via the delegation_id join, G 386, R1 392, R2 398, R3 404);
+  - 620 comparison: 2/2.
+- **Self-checks:**
+  - the 620f/621 agent calls pass `agent_loop_signature` 7/7 and 24/24;
+  - delivery-link digests for the three input runs are unchanged by the origin corrections;
+  - renamed IDs and shifted seqs give the same shape;
+  - reruns are byte-identical;
+  - joins fail closed (duplicate tool message, one-byte change, duplicate `tool_end`).
+- **Independent reviews:**
+  - **Trace-analyst:** recomputed delivers from raw data, with no missing or extra links (621: 1376, sc3: 4546). It confirmed the 10 evictions, the irregularities (363–365, 383, 416, 366/372/378), the overlaps and the signature results; the traces were unchanged.
+  - **Schema-auditor (four rounds):** no BLOCKER, no schema conflict. The minor findings were applied, except one that predates this work: IDs and `raw_ref` objects don't follow the viz profile's §3 format.
+
+### Remaining issues
+- **Viz-profile D1 rev 3 is written and committed** (AP; profile status "DRAFT, revision 3"):
+  - `order` = first raw seq, as observation order only; `start_seq`/`end_seq` in `raw_ref`; open spans run to the end of the trace;
+  - observed precedence = `end_seq(X) < start_seq(Y)`, a PROFILE-LOCAL, conservative reading of 0.3's deferred partial order (§4.3, §12);
+  - overlapping spans are overlapping observations, not proof of simultaneous execution; overlaps are listed in `profile_local.order`;
+  - where precedence isn't observed: the stored link fails its check, a tie span goes to ambiguities, the inference (including one relying on a withheld link's absence) is UNKNOWN where it defines UNKNOWN, and "not established" for §10.3 Lineage;
+  - delegation: producer (parent model event, only where the arguments first observably occur in its output; otherwise `$unresolved`), `task` carrier (never producer) and recipient (only through stored `delivers`) are kept separate.
+  - Schema-auditor: three rounds, no BLOCKER. Its final nit (§10.3 Lineage has no UNKNOWN; use "not established") is applied.
+- **Adapter vs D1 rev 3:** the adapter output does not yet carry `start_seq`/`end_seq` per event or the `profile_local.order` overlap list in the profile's form. Whether model calls of different agents ever overlap is unchecked.
+- **Inference limits:**
+  - a framework call that reproduces an agent's exact conversation state would pass `agent_loop_signature` [HYP];
+  - fail-closed loses genuine post-summary agent calls as agent-input events when `offered_tools` is absent;
+  - deliveries into 416 (30) are unrepresented by design.
+- **Viz-profile §3 format** (IDs and `raw_ref` objects) is not followed by the adapter output.
+
+### Next research tasks
+1. **DONE (2026-10-20):** viz-profile D1 rev 3 written and committed in AP (not pushed).
+2. Increment 2:
+   - E2 eviction substitutes (new evidence; framework eviction event; source `$unresolved` [framework, tool]);
+   - E3 question (external evidence; source `$unresolved` [user, benchmark]);
+   - the system prompt;
+   - re-check that a child's human message can't match both the question and a delegation argument;
+   - the completed-`task` result path (not yet exercised).
+3. **DONE (2026-10-20):** `c194233` pushed to `fork`.
+4. Still pending: naming annotator 2, the result document, cleanup of C2 / `tsfm_plans` / `/tmp/tsfm_work`, and the instrumented-schema version bump.
+
+Test command, from the worktree root:
+`env -u OTEL_TRACES_FILE .venv/bin/python -m pytest src/agent src/servers/wo src/observability -q -p no:cacheprovider -W ignore::DeprecationWarning`
+
+## Handoff (2026-10-20, superseded by the section above): O2/O3 committed, extraction audit done, E1–E4 recommended, work preserved
 
 **Status.**
 - No model call, agent run, database access or paid experiment.
