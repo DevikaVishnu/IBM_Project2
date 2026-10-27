@@ -1,16 +1,16 @@
 import { useRef, useState } from "react";
-import run621 from "./data/aob-621.demo.json";
-import run620 from "./data/aob-620f.demo.json";
 import { Disclosure, HighlightedText, IdButton, Json, KV, LAYER, LayerTag, Mono, Note, Section, Segmented, Stat, T, eyebrow, panel } from "./ui.jsx";
 
 // State-vs-evidence workflow over pre-built data (scripts/demo/build_demo_data.py): stored fixture
 // objects, adapter output and computed comparison results, rendered as they are.  Nothing here
 // derives a claim, proposition, state or link.
 
-const RUNS = {
-  "aob-621": { label: "621 · positive control", data: run621 },
-  "aob-620f": { label: "620-fileobs · abstention control", data: run620 },
-};
+// src/demo/data/ is local-only (gitignored): each run is loaded only if its file is present, so a fresh clone still builds.
+const DATA = import.meta.glob(["./data/aob-621.demo.json", "./data/aob-620f.demo.json"], { eager: true, import: "default" });
+const RUNS = Object.fromEntries([
+  ["aob-621", { label: "621 · positive control", data: DATA["./data/aob-621.demo.json"] }],
+  ["aob-620f", { label: "620-fileobs · abstention control", data: DATA["./data/aob-620f.demo.json"] }],
+].filter(([, v]) => v.data));
 const fmt = n => n.toLocaleString("en-US");
 
 function prepare(run) {
@@ -257,7 +257,12 @@ function EventInspector({ p, id }) {
 }
 
 export default function CompareView({ layout }) {
-  const [runKey, setRunKey] = useState("aob-621");
+  if (!Object.keys(RUNS).length) return <div style={{ padding: 16 }}><Note tone="info" testid="local-only-data">Demo data is local-only. See <Mono>docs/DATA.md</Mono> to get or build it.</Note></div>;
+  return <CompareWorkspace layout={layout} />;
+}
+
+function CompareWorkspace({ layout }) {
+  const [runKey, setRunKey] = useState(Object.keys(RUNS)[0]);
   const [sel, setSel] = useState({ type: "o3" });
   const [tab, setTab] = useState(0);
   const p = PREP[runKey];

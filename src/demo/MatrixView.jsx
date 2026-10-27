@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import MANIFEST from "./data/matrices/index.json";
 import { Disclosure, HATCH, IdButton, Json, KV, LAYER, LayerTag, Mono, Note, Section, Stat, T, eyebrow, panel } from "./ui.jsx";
 
 // Agent × model-call matrix for any run listed in the manifest (scripts/demo/build_matrix.py builds and
@@ -9,8 +8,10 @@ import { Disclosure, HATCH, IdButton, Json, KV, LAYER, LayerTag, Mono, Note, Sec
 // checked against the manifest before use.
 
 const CONTRACT = "agenttrace-matrix/0.2";
+// src/demo/data/ is local-only (gitignored): the manifest is loaded only if present, so a fresh clone still builds.
+const MANIFEST = import.meta.glob("./data/matrices/index.json", { eager: true, import: "default" })["./data/matrices/index.json"];
 const FILES = import.meta.glob("./data/matrices/*.matrix.json", { query: "?raw", import: "default" });
-const RUNS = [...MANIFEST.runs].sort((a, b) => b.agents - a.agents || b.model_calls - a.model_calls || a.run_id.localeCompare(b.run_id));
+const RUNS = [...(MANIFEST?.runs ?? [])].sort((a, b) => b.agents - a.agents || b.model_calls - a.model_calls || a.run_id.localeCompare(b.run_id));
 
 async function sha256(text) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -514,6 +515,7 @@ export default function MatrixView({ layout }) {
   }, [runId]);
   const current = state.runId === runId ? state : { status: "loading" };
   const fixed = layout.fixed;
+  if (!MANIFEST) return <div style={{ padding: 16 }}><Note tone="info" testid="local-only-data">Demo data is local-only. See <Mono>docs/DATA.md</Mono> to get or build it.</Note></div>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: fixed ? "100%" : "auto" }}>
