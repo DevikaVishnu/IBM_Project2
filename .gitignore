@@ -20,9 +20,15 @@ data/assetopsbench/runs/
 # Executed, unredacted copies of published experiment files.
 /local/
 .claude/settings.local.json
+# Demo data stays local until the licence check and annotation pilot are complete.
+src/demo/data/
 
 # Caches and tool scratch
 __pycache__/
 *.pyc
 .Rhistory
 .playwright-mcp/
+
+# Local Claude Code settings and unpublished pilot packages
+.claude/
+docs/experiments/stage3-pilot-*.zip

@@ -1,8 +1,65 @@
 # Research state
 
-Last updated 2026-10-20. Source: the checkpoint linked below (its §-numbers are cited as "ckpt §N").
+Last updated 2026-10-22. Source: the checkpoint linked below (its §-numbers are cited as "ckpt §N").
 
-## Handoff (2026-10-20, latest): adapter increment 1 pushed to fork; viz-profile D1 rev 3 written
+## Handoff (2026-10-22, latest): IBM demo viewer built locally; nothing committed
+
+**Objective.** Hold an IBM Research Belief Explorer demo on **2026-10-28**. Our team's scope is cognitive observability (not Trace Explorer, and not the persona-based Decision Explorer). The demo shows what agents saw, what they asserted and how that compares with delivered evidence. Every value is read-only, offline and reproducible.
+
+**Status.**
+- **The demo works locally** in the AP viewer, tab `#demo` (`npm run dev`).
+- **Not committed:** AP branch `feature/automated-semantic-extraction`, no staging or push.
+- **No model call, paid run or raw-trace change.** Schema 0.3, the fixtures and the adapter are unchanged.
+- **Reported by the user, not re-run here:** adapter increment 2 is at `b9e09f6` on the fork, 608 no-model tests passed, the schema-auditor and trace-analyst approved it, and structural adapter work is feature-frozen unless evaluation finds defects.
+
+### Demo modes
+1. **Observation matrix · scenario_3 B.**
+   - Rows are the agents the trace actually records: `root` and `sub-1` (general-purpose), plus an "unresolved" row for call 383. Columns are the 71 model calls in observation order.
+   - It shows the delegation (92 → 96, `delegation_id` join), 4,713 structural deliveries, and fixture-B links reproduced 5/5.
+   - Every cell reads "observed, no semantic claim extracted".
+2. **State vs evidence · 621 / 620.**
+   - 621: R → `delivers` → `llm:157` → claim span in `llm_end` 158 → O3 **AGREES**.
+   - 620: O3 **UNKNOWN**, shown as "insufficient evidence, not a contradiction".
+   - All 7 computed results match the hand-written expected results.
+
+### Files
+| File | Status |
+|---|---|
+| `src/main.jsx` | modified (tracked): demo tab, `#demo` / `#timeline` URL hash, fixed-viewport shell |
+| `src/demo/{DemoTab,MatrixView,CompareView,ui}.jsx`, `demo.css`, `README.md` | untracked, new |
+| `src/demo/data/{aob-621,aob-620f}.demo.json`, `aob-sc3-B.matrix.json` | untracked, generated. They contain model-output excerpts, a 1,331-char tool result and ≤ 800-char tool excerpts; no secrets and no complete model inputs |
+| `scripts/demo/build_demo_data.py`, `build_matrix_data.py` | untracked; offline builders that import the worktree adapter and compare module at `b9e09f6` |
+| `local/demo-screenshots/*.png` | **local-only** (`.gitignore /local/`) |
+| `docs/experiments/stage3-pilot-20261021/` | **local-only** (`.git/info/exclude`): Stage 3 blank two-annotator pilot package, untouched |
+
+`DemoView.jsx` was replaced by `CompareView.jsx`. The legacy Belief Evolution and Timeline + Graph tabs are unchanged.
+
+### Checks [OBS 2026-10-22]
+- `npm run build` passes. It warns that the 683 KB bundle exceeds the 500 KB chunk limit.
+- `npm run lint` fails repo-wide, because there is no ESLint config (this predates the demo). The demo files pass with a temporary flat config.
+- Playwright at 1920×1080 and 1366×768: no page scroll, no horizontal overflow, console clean.
+- **Simulated zoom, not real browser zoom.** These viewports were resized to stand in for 125–200% zoom: 1536×864, 1280×720, 960×540, 1093×614, 911×512 and 683×384. At each one:
+  - layout reflows with no clipping and all controls are reachable;
+  - matrix columns stay at 28 px or more, with sticky agent labels;
+  - keyboard navigation and the jump buttons work, and the claim highlights are visible.
+- **Not tested:** real Chrome/Safari zoom, a screen reader, or a projector.
+
+### Remaining tasks
+- **UI:** small event-strip mouse targets; the inspector sits far below the matrix at 200%; the 621/620 run choice isn't kept in the URL; bundle size.
+- **Recording:** rehearse a 4–5 minute walkthrough, then record it.
+- **Licensing:** confirm the AssetOpsBench data licence allows publishing the excerpts before committing the demo JSON.
+- **Reproducibility:** the builders need the untracked local traces and the worktree `.venv`. Decide what to commit and fix the repo ESLint config.
+- **STATE gap:** the increment 2 results table (above it, the increment 1 table) has not been updated.
+
+### Research limitations (unchanged by the demo)
+- No specialist (IoT, TSFM, FMSR or Work Order) participated in any run; sc3-B has only root and a general-purpose sub-agent.
+- No cross-agent belief divergence has been verified. The demo shows agreement (621) and abstention (620), never a contradiction.
+- Claims and states are hand-grounded (fixture claim gold exists only for 621 and 620). There is no automated semantic extraction, and the Stage 3 contract has only been piloted as a blank package; annotator 2 is not named.
+
+### Next task (one)
+**Rehearse the `#demo` walkthrough in a real browser** (Chrome at 100, 125, 150 and 200% zoom, keyboard only, plus a VoiceOver spot check). Fix only blocking issues and write a 4–5 minute script. No commits until the licensing check is done.
+
+## Handoff (2026-10-20, superseded by the section above): adapter increment 1 pushed to fork; viz-profile D1 rev 3 written
 
 **Status.**
 - No model call, agent run, database access or paid experiment.
