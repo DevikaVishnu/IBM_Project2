@@ -38,7 +38,7 @@ const AXIS_H = 46;
 const short = s => (s && s.length > 26 ? `${s.slice(0, 25)}…` : s);
 
 // Everything the view needs, derived once per loaded run from the validated matrix data.
-function derive(m) {
+export function derive(m) {
   const cols = m.columns;
   const colById = Object.fromEntries(cols.map(c => [c.id, c]));
   const hasUnresolved = cols.some(c => c.row === "$unresolved");
@@ -127,7 +127,7 @@ function useSize(ref) {
   return size;
 }
 
-function Matrix({ m, d, sel, onSelect, onActivate, layout }) {
+export function Matrix({ m, d, sel, onSelect, onActivate, layout }) {
   const outer = useRef(null);
   const scroller = useRef(null);
   const { w, h } = useSize(outer);

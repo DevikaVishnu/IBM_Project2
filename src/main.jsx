@@ -3,11 +3,12 @@ import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import BeliefEvolution from './BeliefEvolution.jsx'
 import DemoTab from './demo/DemoTab.jsx'
+import ExplorerTab from './explorer/ExplorerTab.jsx'
 import { layoutOf, useViewport } from './demo/ui.jsx'
 import './index.css'
 
-// '#demo' and '#timeline' reopen those tabs after a reload; no hash keeps the default view.
-const VIEWS = ['beliefs', 'timeline', 'demo']
+// '#demo', '#timeline' and '#explorer' reopen those tabs after a reload; no hash keeps the default view.
+const VIEWS = ['beliefs', 'timeline', 'demo', 'explorer']
 const fromHash = () => VIEWS.find(v => window.location.hash === `#${v}`) || 'beliefs'
 
 function Root() {
@@ -26,7 +27,7 @@ function Root() {
         fontSize:12,padding:'6px 16px',border:'1px solid #e2e8f0',borderRadius:'6px 0 0 6px',
         background:view==='beliefs'?'#3b82f6':'#fff',color:view==='beliefs'?'#fff':'#64748b',
         cursor:'pointer',fontWeight:600,fontFamily:'inherit',
-      }}>⚡ Belief Evolution</button>
+      }}>⚡ Belief Evolution (legacy prototype)</button>
       <button onClick={()=>setView('timeline')} style={{
         fontSize:12,padding:'6px 16px',border:'1px solid #e2e8f0',borderLeft:'none',borderRadius:'0 6px 6px 0',
         background:view==='timeline'?'#3b82f6':'#fff',color:view==='timeline'?'#fff':'#64748b',
@@ -36,9 +37,14 @@ function Root() {
         fontSize:12,padding:'6px 16px',border:'1px solid #e2e8f0',borderRadius:6,marginLeft:8,
         background:view==='demo'?'#3b82f6':'#fff',color:view==='demo'?'#fff':'#64748b',
         cursor:'pointer',fontWeight:600,fontFamily:'inherit',
-      }}>AgentTrace 0.3 demo</button>
+      }}>Earlier demo (archive)</button>
+      <button onClick={()=>setView('explorer')} data-testid="tab-explorer" style={{
+        fontSize:12,padding:'6px 16px',border:'1px solid #e2e8f0',borderRadius:6,marginLeft:8,
+        background:view==='explorer'?'#2563EB':'#fff',color:view==='explorer'?'#fff':'#64748b',
+        cursor:'pointer',fontWeight:600,fontFamily:'inherit',
+      }}>Belief Explorer</button>
     </div>
-    {view === 'beliefs' ? <BeliefEvolution /> : view === 'demo' ? <DemoTab /> : <App />}
+    {view === 'beliefs' ? <BeliefEvolution /> : view === 'demo' ? <DemoTab /> : view === 'explorer' ? <ExplorerTab /> : <App />}
   </div>
 }
 
