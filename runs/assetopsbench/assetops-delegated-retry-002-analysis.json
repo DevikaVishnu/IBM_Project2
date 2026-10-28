@@ -1,0 +1,56 @@
+{
+  "run_id": "assetops-delegated-retry-001",
+  "delegation": [
+    {
+      "delegated_by": "manager",
+      "agent": "asset-helper",
+      "parent_task": "Verify if Chiller 6 is at MAIN using the required retry procedure.",
+      "return_message": "The first attempt to verify the assets at **NOT_A_SITE** resulted in an error indicating that the site does not exist.\n\nOn the second attempt with **MAIN**, I successfully found **5 assets**, including **Chiller 6**. Therefore, **Chiller 6** is indeed at the **MAIN** site. The retry was necessary because the first query was made to an invalid site name.",
+      "source_turn": 0
+    }
+  ],
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "tool": "asset_ids",
+      "input": {
+        "site_name": "NOT_A_SITE"
+      },
+      "tool_status": "success",
+      "outcome": "error",
+      "failure_reason": "unknown site NOT_A_SITE"
+    },
+    {
+      "attempt_number": 2,
+      "tool": "asset_ids",
+      "input": {
+        "site_name": "MAIN"
+      },
+      "tool_status": "success",
+      "outcome": "success",
+      "failure_reason": null
+    }
+  ],
+  "belief_change": {
+    "before_retry": "UNKNOWN: the invalid-site lookup returned no assets.",
+    "after_retry": "TRUE: MAIN lookup returned Chiller 6.",
+    "state_changed_at": "helper attempt 2"
+  },
+  "schema_result": {
+    "supported_now": [
+      "delegated_by",
+      "parent_task",
+      "attempt_number",
+      "failure_reason",
+      "tool_status",
+      "outcome",
+      "state_changed_at"
+    ],
+    "still_unknown": [
+      "visibility",
+      "file lineage",
+      "review checks"
+    ],
+    "important_note": "The first attempt was an empty result, not a tool error."
+  }
+}
