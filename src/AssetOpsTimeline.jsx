@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
-import events607 from "../runs/assetopsbench/assetops-607-events.json";
-import events620 from "../runs/assetopsbench/assetops-620-events.json";
 
-const traces = {
-  "607": { task: "Find Chiller 6 failure modes that its sensors can monitor.", events: events607 },
-  "620": { task: "Choose Chiller 6 sensors and data timing for trip detection.", events: events620 },
-};
+// runs/assetopsbench/ is local-only (gitignored): each trace is loaded only if its file is present, so a fresh clone still builds.
+const DATA = import.meta.glob(["../runs/assetopsbench/assetops-607-events.json", "../runs/assetopsbench/assetops-620-events.json"], { eager: true, import: "default" });
+const traces = Object.fromEntries([
+  ["607", { task: "Find Chiller 6 failure modes that its sensors can monitor.", events: DATA["../runs/assetopsbench/assetops-607-events.json"] }],
+  ["620", { task: "Choose Chiller 6 sensors and data timing for trip detection.", events: DATA["../runs/assetopsbench/assetops-620-events.json"] }],
+].filter(([, v]) => v.events));
 
 function eventInfo(event) {
   if (event.action === "final_answer") return { label: "Final answer", status: "answer", output: event.message };
@@ -18,7 +18,12 @@ function eventInfo(event) {
 }
 
 export default function AssetOpsTimeline() {
-  const [id, setId] = useState("607");
+  if (!Object.keys(traces).length) return <main style={s.page}><div style={s.kicker}>AssetOpsBench trace</div><p data-testid="local-only-data" style={s.task}>AssetOpsBench run traces are local-only and are not in this repository. Put the <code>assetops-*-events.json</code> files in <code>runs/assetopsbench/</code> to see the timeline.</p></main>;
+  return <Timeline />;
+}
+
+function Timeline() {
+  const [id, setId] = useState(Object.keys(traces)[0]);
   const [selected, setSelected] = useState(0);
   const trace = traces[id];
   const items = useMemo(() => trace.events.map(eventInfo), [trace]);
