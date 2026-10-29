@@ -6,6 +6,8 @@ dist/
 
 # Editor / OS cruft
 .DS_Store
+__pycache__/
+*.pyc
 
 # MAST/MAD dataset (fetched via data/mast/fetch.sh)
 data/mast/*.json
@@ -17,6 +19,9 @@ data/assetopsbench/README.md
 # Local-only research material (never published)
 # Raw run traces are read-only evidence and stay local.
 data/assetopsbench/runs/
+# AssetOpsBench run traces and their per-run outputs (events, beliefs, analysis) also stay local;
+# the scripts in tests/ regenerate the outputs from a local trace.
+runs/assetopsbench/
 # Executed, unredacted copies of published experiment files.
 /local/
 .claude/settings.local.json
