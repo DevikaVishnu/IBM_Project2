@@ -36,6 +36,7 @@ Two comparisons are computed on demand and never stored:
 | [`scripts/explorer/`](scripts/explorer/) | Bundle builder, independent bundle validator and tests |
 | [`scripts/demo/`](scripts/demo/) | Interaction-matrix pipeline (agents × model calls in observation order): builder, independent validator, tests, and its contract [`MATRIX_CONTRACT.md`](scripts/demo/MATRIX_CONTRACT.md) |
 | [`src/demo/`](src/demo/) | Earlier demo, kept as an archive tab. Its matrix component is reused by the Belief Explorer |
+| `src/AssetOpsTimeline.jsx`, `tests/*assetops*.py`, `tests/*delegated_retry.py` | **AssetOpsBench timeline** (`#assetops`): step-by-step view of scenarios 607 and 620, plus the trace parser, belief extraction and analysis scripts; see [`docs/assetopsbench-validation.md`](docs/assetopsbench-validation.md) |
 | `src/App.jsx`, `src/BeliefEvolution.jsx`, `tests/` | Legacy prototype (heuristic belief timeline over ChatDev/AG2 traces), kept for reference; see [`BELIEF_EVOLUTION_README.md`](BELIEF_EVOLUTION_README.md) |
 | [`docs/experiments/`](docs/experiments/) | Pre-registrations, results and launch scripts for the recorded AssetOpsBench runs |
 | [`docs/DATA.md`](docs/DATA.md) | How to obtain the datasets and traces, and how to build the explorer data |

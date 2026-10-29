@@ -193,4 +193,6 @@ The Belief Explorer tab (`#explorer`) shows:
 
 > Explorer data is local-only. See docs/DATA.md.
 
-Once the data is in `src/demo/data/` and `src/explorer/data/`, restart the dev server (or rebuild) and the views load it.
+The AssetOpsBench tab (`#assetops`) says its run traces are local-only and asks for the `assetops-*-events.json` files in `runs/assetopsbench/` (gitignored).
+
+Once the data is in `src/demo/data/`, `src/explorer/data/` and `runs/assetopsbench/`, restart the dev server (or rebuild) and the views load it.
