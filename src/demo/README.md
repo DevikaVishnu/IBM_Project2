@@ -1,5 +1,7 @@
 # AgentTrace demo views
 
+The demo data is local-only. To get or build it, see [docs/DATA.md](../../docs/DATA.md).
+
 The **AgentTrace 0.3 demo** tab (`#demo`) has two read-only views. It fills one screen on a desktop and reflows at larger browser zoom. The code is in `DemoTab.jsx`, with shared tokens and components in `ui.jsx`.
 
 - **Observation matrix** (`MatrixView.jsx`) shows any run listed in `data/matrices/index.json`, chosen from the Run menu.
