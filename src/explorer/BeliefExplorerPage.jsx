@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ClaimsPanel from "./ClaimsPanel.jsx";
 import MatrixPanel from "./MatrixPanel.jsx";
 import { FlagsPanel, Overview, SkeletonPanel } from "./SkeletonFlags.jsx";
+import WalkthroughPanel from "./WalkthroughPanel.jsx";
 import { Chip, ORIGIN, OriginTag, SCOPED_CSS, VARS, card, v } from "./theme.jsx";
 
 // Belief Explorer page.  Renders one trace bundle (contract agenttrace-explorer-bundle/0.1,
@@ -19,6 +20,7 @@ const TABS = [
   { id: "matrix", label: "Interaction matrix" },
   { id: "skeleton", label: "Skeleton" },
   { id: "flags", label: "Flags" },
+  { id: "built", label: "How it's built" },
 ];
 
 function useNarrow() {
@@ -82,18 +84,23 @@ function TraceView({ b, narrow }) {
   const [tab, setTab] = useState("overview");
   const [claim, setClaim] = useState(b.claims[0]?.id ?? null);
   const [flag, setFlag] = useState(null);
-  const firstMarker = b.matrix?.overlays?.find(o => o.kind === "claim")?.column ?? b.matrix?.overlays?.[0]?.column ?? b.matrix?.columns?.[0]?.id ?? null;
+  // Open the matrix where the trace's story starts: the first handoff between agents, else the first claim marker.
+  const firstMarker = b.matrix?.edges?.[0]?.from ?? b.matrix?.overlays?.find(o => o.kind === "claim")?.column ?? b.matrix?.overlays?.[0]?.column ?? b.matrix?.columns?.[0]?.id ?? null;
   const [col, setCol] = useState(firstMarker);
   const openClaim = id => { setClaim(id); setTab("claims"); };
   const openFlag = id => { setFlag(id); setTab("flags"); };
   const claimInMatrix = c => { const o = b.matrix?.overlays?.find(x => x.ref === c.id); if (o) setCol(o.column); setTab("matrix"); };
   const flagInMatrix = f => { setFlag(f.id); const o = b.matrix?.overlays?.find(x => x.ref === f.id); setCol(o?.column ?? f.events.find(e => b.matrix?.columns.some(c => c.id === e)) ?? col); setTab("matrix"); };
   const t = b.trace;
+  const runFlag = b.flags.find(f => f.kind === "run_status");
   return (
     <>
       <div style={{ padding: "14px 24px 0", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 14px" }}>
-        <h2 data-testid="trace-title" style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{t.label}</h2>
-        <span style={{ fontSize: 13, color: v("muted") }}>{[t.framework, t.model, t.scenario && `scenario ${t.scenario}`, t.status && `status ${t.status}`].filter(Boolean).join(" · ")}</span>
+        <h2 data-testid="trace-title" style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{t.label}</h2>
+        <span style={{ fontSize: 13, color: v("muted") }}>{[t.framework, t.model, t.scenario && (String(t.scenario).startsWith("scenario") ? String(t.scenario).replace("_", " ") : `scenario ${t.scenario}`)].filter(Boolean).join(" · ")}</span>
+        {runFlag
+          ? <button data-testid="status-chip" onClick={() => openFlag(runFlag.id)} title={runFlag.text} style={{ border: "none", background: "none", padding: 0, cursor: "pointer" }}><Chip tone="danger">⚑ Run status: {t.status} · {runFlag.title}</Chip></button>
+          : t.status && <Chip tone={t.status === "error" ? "danger" : "muted"}>Run status: {t.status}</Chip>}
         <span data-testid="honesty-label" style={{ marginLeft: narrow ? 0 : "auto", display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
           <Chip tone="warning">Annotations: {b.honesty.annotations}</Chip>
         </span>
@@ -114,6 +121,7 @@ function TraceView({ b, narrow }) {
         {tab === "matrix" && <MatrixPanel b={b} selectedCol={col} onSelectCol={setCol} highlightFlag={flag} onOpenClaim={openClaim} onOpenFlag={openFlag} narrow={narrow} />}
         {tab === "skeleton" && <SkeletonPanel b={b} onShowColumn={id => { setCol(id); setTab("matrix"); }} />}
         {tab === "flags" && <FlagsPanel b={b} selected={flag} onSelect={setFlag} onShowInMatrix={flagInMatrix} />}
+        {tab === "built" && <WalkthroughPanel b={b} onOpenClaim={openClaim} onShowInMatrix={claimInMatrix} />}
         <details style={{ marginTop: 18 }} data-testid="provenance">
           <summary style={{ fontSize: 13, color: v("muted"), cursor: "pointer" }}>Provenance and display rules</summary>
           <ul style={{ fontSize: 12.5, color: v("muted"), lineHeight: 1.6, paddingLeft: 18 }}>

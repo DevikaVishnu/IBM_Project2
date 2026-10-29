@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Chip, Empty, Excerpt, OriginTag, Section, card, eyebrow, fmt, linkBtn, mono, v } from "./theme.jsx";
 
-const KIND_LABEL = { model_call: "model call", tool_call: "tool call", framework_eviction: "framework eviction", check: "check (no LLM call)" };
+const KIND_LABEL = { model_call: "model call", tool_call: "tool call", framework_eviction: "framework eviction", check: "check (no LLM call)",
+  framework_event: "framework record", config: "configuration", test_output: "test output (no LLM call)" };
 const agentName = id => (id === "$unresolved" ? "unresolved" : id === "$not_reconstructed" ? "not reconstructed" : String(id ?? "").replace(/^agent:|^role:/, ""));
 
 export function SkeletonPanel({ b, onShowColumn }) {
@@ -12,6 +13,13 @@ export function SkeletonPanel({ b, onShowColumn }) {
   const rows = sk.events.filter(e => kind === "all" || e.kind === kind);
   const cols = new Set((b.matrix?.columns ?? []).map(c => c.id));
   const dl = sk.delivery;
+  const byId = Object.fromEntries(sk.events.map(e => [e.id, e]));
+  const evName = id => {
+    const e = byId[id];
+    if (!e) return id;
+    return e.kind === "model_call" && e.label === "model call" ? `${agentName(e.agent)} · call at step ${e.steps[0]}` : `${e.label} (${agentName(e.agent)})`;
+  };
+  const roleName = id => byId[id]?.label ?? id;
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <Section title="Agents" origin={sk.origin} testid="skeleton-agents">
@@ -27,15 +35,29 @@ export function SkeletonPanel({ b, onShowColumn }) {
         {sk.handoffs.length > 0 && (
           <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6 }}>
             <div style={{ ...eyebrow, marginBottom: 4 }}>Handoffs</div>
-            {sk.handoffs.map(h => <div key={`${h.from}-${h.to}`}>{h.from.replace(/^ev:llm:/, "call ")} → {h.to.replace(/^ev:llm:/, "call ")} <span style={{ color: v("muted") }}>· {h.via}</span> <OriginTag origin={h.origin} /></div>)}
+            {sk.handoffs.map(h => (
+              <div key={`${h.from}-${h.to}`} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" }}>
+                <b>{evName(h.from)}</b> → <b>{evName(h.to)}</b>
+                <span style={{ color: v("muted") }}>· {h.item && b.evidence[h.item]?.label ? `${b.evidence[h.item].label} delivered` : h.via}{h.via.includes("(") ? ` ${h.via.slice(h.via.indexOf("("))}` : ""}</span>
+                <OriginTag origin={h.origin} />
+              </div>
+            ))}
           </div>
         )}
       </Section>
       {dl && (
-        <Section title="Delivery (from §14)" origin="hand-reconstructed" testid="skeleton-delivery">
+        <Section title={`What reached each LLM call (from ${dl.source ?? "§14"})`} origin="hand-reconstructed" testid="skeleton-delivery">
+          {dl.not_delivered.map(d => (
+            <div key={d.item} data-testid="not-delivered" style={{ border: "1px solid #FECACA", background: "#FEF2F2", borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: 13.5, lineHeight: 1.55 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <Chip tone="danger">NOT DELIVERED</Chip><b>{b.evidence[d.item]?.label ?? d.item}</b>
+              </div>
+              <div style={{ marginTop: 4 }}>Reached none of: {d.to.map(roleName).join(", ")}.</div>
+              <div style={{ color: v("muted"), fontSize: 12.5 }}>Stated as not delivered (not UNKNOWN) because coverage is established: {d.coverage}.</div>
+            </div>
+          ))}
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
-            {dl.delivered.map(d => <li key={d.item}><b>{b.evidence[d.item]?.label ?? d.item}</b> → {d.to.map(t => t.replace(/^gk:/, "")).join(", ")} <span style={{ color: v("muted") }}>({d.lines})</span></li>)}
-            {dl.not_delivered.map(d => <li key={d.item}><b>{b.evidence[d.item]?.label ?? d.item}</b> → <Chip tone="danger">not delivered</Chip> to {d.to.map(t => t.replace(/^gk:/, "")).join(", ")} <span style={{ color: v("muted") }}>· coverage {d.coverage}</span></li>)}
+            {dl.delivered.map(d => <li key={d.item}><b>{b.evidence[d.item]?.label ?? d.item}</b> → {d.to.map(roleName).join(", ")} <span style={{ color: v("muted") }}>({d.lines})</span></li>)}
           </ul>
         </Section>
       )}
@@ -56,7 +78,7 @@ export function SkeletonPanel({ b, onShowColumn }) {
                   <td style={{ padding: "5px 10px", ...mono }}>{e.steps[0] === e.steps[1] ? e.steps[0] : `${e.steps[0]}–${e.steps[1]}`}</td>
                   <td style={{ padding: "5px 10px" }}>{KIND_LABEL[e.kind] ?? e.kind}</td>
                   <td style={{ padding: "5px 10px", ...mono }}>{agentName(e.agent)}</td>
-                  <td style={{ padding: "5px 10px" }}>{e.label}{e.phase ? <span style={{ color: v("muted") }}> · {e.phase}</span> : null}{e.produces ? <span style={{ color: v("muted") }}> · produces {e.produces}</span> : null}{e.tokens ? <span style={{ color: v("muted") }}> · {e.tokens}</span> : null}</td>
+                  <td style={{ padding: "5px 10px" }}>{e.label}{e.phase && e.phase !== e.label ? <span style={{ color: v("muted") }}> · {e.phase}</span> : null}{e.produces ? <span style={{ color: v("muted") }}> · produces {e.produces}</span> : null}{e.tokens ? <span style={{ color: v("muted") }}> · {e.tokens}</span> : null}</td>
                   <td style={{ padding: "5px 10px" }}><OriginTag origin={e.origin} /></td>
                   <td style={{ padding: "5px 10px" }}>{cols.has(e.id) && <button style={linkBtn} onClick={() => onShowColumn(e.id)}>matrix</button>}</td>
                 </tr>
@@ -121,7 +143,19 @@ export function FlagsPanel({ b, selected, onSelect, onShowInMatrix }) {
   );
 }
 
+function useTileCols() {
+  const get = () => (typeof window === "undefined" ? 8 : window.innerWidth >= 1600 ? 8 : window.innerWidth >= 900 ? 4 : 2);
+  const [cols, setCols] = useState(get);
+  useEffect(() => {
+    const on = () => setCols(get());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  return cols;
+}
+
 export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
+  const tileCols = useTileCols();
   const sk = b.skeleton ?? {};
   const mx = b.matrix;
   const c = sk.counts ?? {};
@@ -147,7 +181,13 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
   const handoff = b.facts.find(f => f.handoff);
   return (
     <div data-testid="overview" style={{ display: "grid", gap: 14 }}>
-      <div data-testid="tiles" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+      {b.flags.filter(f => f.kind === "run_status").map(f => (
+        <div key={f.id} role="note" data-testid="overview-run-status" style={{ ...card, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", padding: "12px 16px", background: "#FEF2F2", borderColor: "#FECACA", color: "#7F1D1D", fontSize: 14 }}>
+          <b style={{ color: "#B91C1C" }} aria-hidden="true">⚑</b><b>{f.title}.</b><span style={{ flex: "1 1 360px" }}>{f.text}</span><OriginTag origin={f.origin} />
+          <button style={{ ...linkBtn, color: "#B91C1C" }} onClick={() => onOpenFlag(f.id)}>Open flag</button>
+        </div>
+      ))}
+      <div data-testid="tiles" style={{ display: "grid", gridTemplateColumns: `repeat(${tileCols}, minmax(0, 1fr))`, gap: 10 }}>
         {tiles.map(t => (
           <div key={t.label} data-testid={`tile-${t.label}`} style={{ ...card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}><span style={eyebrow}>{t.label}</span></div>
@@ -218,7 +258,7 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
           </ul>
           {mx && (
             <p style={{ margin: "10px 0 0", fontSize: 13 }}>
-              <button style={linkBtn} onClick={() => onTab("matrix")}>Open the interaction matrix</button> · {mx.rows.length} rows × {mx.columns.length} columns · {(mx.overlays ?? []).length} markers
+              <button style={linkBtn} onClick={() => onTab("matrix")}>Open the interaction matrix</button> · {mx.rows.length} {mx.rows.length === 1 ? "row" : "rows"} × {mx.columns.length} columns · {(mx.overlays ?? []).length} markers
             </p>
           )}
         </Section>

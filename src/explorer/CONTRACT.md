@@ -64,7 +64,7 @@ The grid itself stays claim-free: there are no `claims`, `propositions` or `stat
 
 ### `evidence[id]`
 
-`{id, step, tool, kind, source, produced_by, locator, sha256, size, excerpt: {text, start, complete, spans}, origin}`. The excerpt is a display window around the annotated spans (spans re-based into `text`). Gomoku items carry `lines` instead of `step`.
+`{id, step, tool, kind, source, produced_by, locator, sha256, size, excerpt: {text, start, complete, to_end, spans}, origin}`. The excerpt is a display window around the annotated spans (spans re-based into `text`). `start > 0` means text is cut before the window; `to_end: false` means text is cut after it. Gomoku items carry `lines` instead of `step`.
 
 ### `claims[]`: the per-claim chain
 
@@ -86,6 +86,20 @@ The grid itself stays claim-free: there are no `claims`, `propositions` or `stat
 - `anchors` are the few columns that get a marker.
 - `events` are all the columns highlighted when the flag is selected.
 - `computed[]` items are the builder's checks, each with its own origin.
+
+### `walkthrough` (optional)
+
+Data for the "How it's built" view, which follows one claim from raw records to the screen. Present only for traces listed in `WALKTHROUGH` in the builder (currently run 621's June 10 claim).
+
+| Field | Content |
+|---|---|
+| `claim`, `evidence`, `tool_event`, `first_receiver` | Ids into `claims`, `evidence` and `skeleton.events` |
+| `raw` | `{origin: observed, steps: [first, last], records[]}`. Record **metadata only** for the steps from the tool call to the first model call that received the item: type, agent, tool, tool_call_id, offset and limit, sizes, status, and sha256 prefixes. No record content beyond what `evidence` already holds |
+| `adapter` | `{origin: computed, delivers[]: {event, locator, message_index, byte_identical}, verifier_errors}`: every delivers link of the item |
+| `comparator` | `{origin: computed, operation, o2[]: {event, item, value}}`: O2 at the first receiving call and at the claiming call. O3 is read from the claim itself |
+| `note` | One line shown under the stepper |
+
+Everything else the view shows (claim, proposition, state, links, O3, run totals) is read from the existing bundle fields, so the view holds no values of its own.
 
 ## Validator rules (`validate_bundle.py`)
 

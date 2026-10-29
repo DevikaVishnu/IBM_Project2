@@ -107,12 +107,41 @@ def test_sc3_facts():
 def test_gomoku_skeleton():
     b = load("gomoku")
     assert b["matrix"]["origin"] == "hand-reconstructed" and b["matrix"]["source_contract"] is None
-    assert b["skeleton"]["counts"]["llm_calls"] == 12 and b["skeleton"]["counts"]["reconstructed_llm_calls"] == 7
+    # 13 usage records in the log; 12 of them open with a logged [Start Chat] input (the 12 calls of §14.2); 7 are §14's own events.
+    counts = b["skeleton"]["counts"]
+    assert counts["llm_calls"] == 13 and counts["start_chat_calls"] == 12 and counts["unlogged_input_calls"] == 1 and counts["reconstructed_llm_calls"] == 7
     nd = b["skeleton"]["delivery"]["not_delivered"][0]
     assert nd["item"] == "gk:gui-config" and nd["value"] == "NOT_DELIVERED" and "COMPLETE" in nd["coverage"]
     r3 = b["claims"][0]
     assert r3["state"]["value"] == "FALSE" and r3["o3"]["comparison"] == "UNKNOWN"
     assert {p["id"] for p in b["propositions"]} >= {"prop:gk:G1", "prop:gk:G4"}
+
+
+def test_gomoku_full_history():
+    b = load("gomoku")
+    mx = b["matrix"]
+    rows = {r["id"]: r for r in mx["rows"]}
+    assert set(rows) == {"role:ceo", "role:cpo", "role:cto", "role:programmer", "role:reviewer", "role:counselor", "role:test-gate"}
+    per_row = {rid: sum(1 for c in mx["columns"] if c["row"] == rid) for rid in rows}
+    assert per_row == {"role:ceo": 2, "role:cpo": 2, "role:cto": 1, "role:programmer": 5, "role:reviewer": 3, "role:counselor": 0, "role:test-gate": 1}
+    assert not any(c["row"] in ("$not_reconstructed", "$unresolved") for c in mx["columns"])
+    # Roles without annotated claims say so; only the Code Reviewer holds the annotated claim.
+    assert all(("claims not annotated" in r["sub"]) == (rid not in ("role:reviewer", "role:test-gate")) for rid, r in rows.items())
+    # The call with no logged input has delivery UNKNOWN, not zero.
+    unlogged = next(c for c in mx["columns"] if c["id"] == "gk:call:110")
+    assert unlogged["delivers"] is None and unlogged["first"] is None and "input not logged" in unlogged["phase"]
+    # §14's handoffs are kept; every handoff joins two different rows and reaches a role the item had not reached before.
+    edges = {(e["from"], e["to"]) for e in mx["edges"]}
+    assert {("gk:coding", "gk:r1"), ("gk:r1", "gk:m1"), ("gk:m1", "gk:r2"), ("gk:r2", "gk:m2"), ("gk:m2", "gk:r3"), ("gk:r3", "gk:m3")} <= edges
+    assert {("gk:m3", "gk:call:2677"), ("gk:m3", "gk:call:2901"), ("gk:call:2505", "gk:call:2677"), ("gk:call:184", "gk:coding")} <= edges
+    col = {c["id"]: c for c in mx["columns"]}
+    assert all(col[f]["row"] != col[t]["row"] for f, t in edges)
+    assert not any(t == "gk:call:110" or f == "gk:call:67" and t == "gk:call:110" for f, t in edges)
+    # The test gate stays a check, not an LLM call; framework, config and test records are skeleton events only.
+    kinds = {e["id"]: e["kind"] for e in b["skeleton"]["events"]}
+    assert kinds["gk:test"] == "check" and kinds["gk:test:2467"] == "test_output" and kinds["gk:cfg:23"] == "config"
+    assert not ({c["id"] for c in mx["columns"]} & {i for i, k in kinds.items() if k in ("framework_event", "config", "test_output")})
+    assert next(f for f in b["facts"] if f["id"] == "fact:calls")["discrepancy"] is True
 
 
 # --- validator: missing layers and violations --------------------------------------------------
@@ -133,6 +162,7 @@ def test_missing_layers_are_valid():
 def test_stripped_layers_still_valid(tid):
     b = copy.deepcopy(load(tid))
     b["claims"], b["propositions"], b["non_claims"], b["flags"] = [], [], [], []
+    b.pop("walkthrough", None)
     b["matrix"]["overlays"] = []
     b["layers"].update(claims=False, flags=False, o3=False)
     assert validate(b) == []
@@ -198,3 +228,55 @@ def test_builder_stops_on_annotation_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr(bb, "ANN_DIR", tmp_path)
     with pytest.raises(bb.Mismatch, match="2877"):
         bb.build_aob("aob-621", bb.AOB["aob-621"], AP_ROOT.parent / "AssetOpsBench-agenttrace-spec", (adapter, verify, locator, compare))
+
+
+# --- "How it's built" walkthrough ---------------------------------------------------------------
+
+
+def test_walkthrough_matches_bundle():
+    b = load("aob-621")
+    w = b["walkthrough"]
+    claim = next(c for c in b["claims"] if c["id"] == w["claim"])
+    ev = b["evidence"][w["evidence"]]
+    sk = {e["id"]: e for e in b["skeleton"]["events"]}
+    # Stage 1: records run from the tool call to the first receiving model call.
+    assert w["raw"]["steps"] == [sk[w["tool_event"]]["steps"][0], sk[w["first_receiver"]]["steps"][0]]
+    assert [r["seq"] for r in w["raw"]["records"]] == list(range(w["raw"]["steps"][0], w["raw"]["steps"][1] + 1))
+    end = next(r for r in w["raw"]["records"] if r["type"] == "tool_end")
+    assert end["output_size"] == ev["size"] and ev["sha256"].startswith(end["output_sha256_prefix"])
+    assert not any(k in r for r in w["raw"]["records"] for k in ("output", "input_batches", "message", "args"))  # metadata only
+    # Stage 2: delivers links are the claim's evidence, byte-identical, and include the claiming call.
+    events = [d["event"] for d in w["adapter"]["delivers"]]
+    assert w["first_receiver"] == events[0] and claim["event"] in events and all(d["byte_identical"] for d in w["adapter"]["delivers"])
+    assert w["adapter"]["verifier_errors"] == b["checks"]["verifier_errors"] == 0
+    # Stage 3: the hand-annotated link is the evidence item followed here.
+    assert w["evidence"] in [l["evidence"] for l in claim["links"]]
+    # Stage 4: O2 at the claiming call equals the claim chain's delivery; O3 is the claim's own result.
+    o2 = {o["event"]: o["value"] for o in w["comparator"]["o2"]}
+    assert o2[claim["event"]] == next(l for l in claim["links"] if l["evidence"] == w["evidence"])["delivery"]["value"] == "DELIVERED"
+    assert claim["o3"]["comparison"] == "AGREES" and claim["o3"]["direct"] == "TRUE" and claim["o3"]["delivered_direct"] == "TRUE"
+    # Stage 6: the claim has a marker in the matrix at its call.
+    assert any(o["ref"] == claim["id"] and o["column"] == claim["event"] for o in b["matrix"]["overlays"])
+    assert "Gomoku skeleton is hand-reconstructed" in w["note"]
+    for tid in ("aob-sc3-B", "gomoku"):
+        assert "walkthrough" not in load(tid)
+
+
+def test_walkthrough_component_has_no_trace_values():
+    """The component must read every trace value from the bundle."""
+    b = load("aob-621")
+    w = b["walkthrough"]
+    ev = b["evidence"][w["evidence"]]
+    claim = next(c for c in b["claims"] if c["id"] == w["claim"])
+    src = (AP_ROOT / "src/explorer/WalkthroughPanel.jsx").read_text(encoding="utf-8")
+    values = {str(ev["size"]), f"{ev['size']:,}", ev["sha256"][:8], w["evidence"], w["claim"], w["tool_event"], w["first_receiver"], claim["event"],
+              str(b["skeleton"]["counts"]["delivers"]), f"{b['skeleton']['counts']['delivers']:,}", str(b["skeleton"]["counts"]["events"]),
+              str(b["skeleton"]["counts"]["evidence"]), str(claim["step"]), str(w["raw"]["records"][0]["args.offset"]), "June 10", "AGREES"}
+    values |= {str(r["seq"]) for r in w["raw"]["records"]} | {str(d["message_index"]) for d in w["adapter"]["delivers"]}
+    found = sorted(x for x in values if re_word(x).search(src))
+    assert not found, f"hard-coded trace values in WalkthroughPanel.jsx: {found}"
+
+
+def re_word(x):
+    import re
+    return re.compile(rf"(?<![\w.]){re.escape(x)}(?![\w])")

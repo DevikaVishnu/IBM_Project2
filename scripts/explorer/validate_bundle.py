@@ -74,7 +74,11 @@ def validate(b: dict) -> list[str]:
             tagged(c, f"column {c.get('id')}")
             chk(c.get("row") in rows, f"column {c.get('id')}: row {c.get('row')!r} is not a matrix row")
             chk(not ev_ids or c["id"] in ev_ids, f"column {c['id']} is not a skeleton event")
-            chk(c.get("delivers", 0) >= c.get("first", 0) >= 0, f"column {c['id']}: first > delivers")
+            # delivers/first are None together when the call's input is not recorded (delivery UNKNOWN).
+            if c.get("delivers") is None or c.get("first") is None:
+                chk(c.get("delivers") is None and c.get("first") is None, f"column {c['id']}: delivers and first must both be unknown")
+            else:
+                chk(c["delivers"] >= c["first"] >= 0, f"column {c['id']}: first > delivers")
             cols[c["id"]] = c
         for e in mx.get("edges", []):
             tagged(e, f"edge {e.get('from')}->{e.get('to')}")
@@ -156,6 +160,19 @@ def validate(b: dict) -> list[str]:
             tagged(d, f"delivery {d.get('item')}")
             chk(d.get("value") in DELIVERY, f"delivery {d.get('item')}: value {d.get('value')!r}")
             chk(d.get("value") != "NOT_DELIVERED" or d.get("coverage"), f"delivery {d.get('item')}: NOT_DELIVERED without coverage")
+    w = b.get("walkthrough")
+    if w is not None:
+        chk(w.get("claim") in claims, f"walkthrough claim {w.get('claim')} is not a claim")
+        chk(w.get("evidence") in evidence, f"walkthrough evidence {w.get('evidence')} missing from evidence")
+        for k in ("tool_event", "first_receiver"):
+            chk(not ev_ids or w.get(k) in ev_ids, f"walkthrough {k} {w.get(k)} is not a skeleton event")
+        for part in ("raw", "adapter", "comparator"):
+            tagged(w.get(part), f"walkthrough {part}")
+        for d in (w.get("adapter") or {}).get("delivers", []):
+            chk(not ev_ids or d.get("event") in ev_ids, f"walkthrough delivers event {d.get('event')} unknown")
+        for o in (w.get("comparator") or {}).get("o2", []):
+            chk(o.get("value") in DELIVERY, f"walkthrough O2 value {o.get('value')!r}")
+        chk(bool(w.get("note")), "walkthrough note missing")
     # Layer flags must not claim data that is absent.
     chk(not b["layers"]["claims"] or b["claims"], "layers.claims is true but there are no claims")
     chk(not b["layers"]["flags"] or b["flags"], "layers.flags is true but there are no flags")

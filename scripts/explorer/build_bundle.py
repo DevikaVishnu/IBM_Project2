@@ -71,6 +71,25 @@ class Mismatch(Exception):
     pass
 
 
+# Stage-by-stage report printed by main() (readable when the build is run live).
+REPORT: list[tuple[str, str]] = []
+CHECKED = [0]  # annotated values found verbatim in the source
+
+
+def say(stage: str, msg: str) -> None:
+    REPORT.append((stage, msg))
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n:,} {word}" if n == 1 else f"{n:,} {word}s"
+
+# Which claim the "How it's built" walkthrough follows, per trace.
+WALKTHROUGH = {"aob-621": "clm:621:june10-sequence"}
+WALKTHROUGH_NOTE = "Every other claim follows the same path; the Gomoku skeleton is hand-reconstructed instead of adapter-generated."
+RECORD_FIELDS = ("type", "agent_id", "tool", "tool_call_id", "path", "offset", "limit", "window_size", "output_size", "size", "status",
+                 "n_input_messages", "differs_from_raw")
+
+
 def need(cond, msg):
     if not cond:
         raise Mismatch(msg)
@@ -85,16 +104,17 @@ def find_one(text: str, needle: str, what: str) -> list[int]:
     """Code-point span of the single occurrence of needle in text."""
     hits = [m.start() for m in re.finditer(re.escape(needle), text)]
     need(len(hits) == 1, f"{what}: expected exactly one occurrence of {needle!r}, found {len(hits)}")
+    CHECKED[0] += 1
     return [hits[0], hits[0] + len(needle)]
 
 
 def window(text: str, spans: list[list[int]]) -> dict:
     """Display excerpt around the spans, with the spans re-based into the excerpt."""
     if not spans:
-        return {"text": text[:300], "start": 0, "complete": len(text) <= 300, "spans": []}
+        return {"text": text[:300], "start": 0, "complete": len(text) <= 300, "to_end": len(text) <= 300, "spans": []}
     lo = max(0, min(s for s, _ in spans) - WINDOW)
     hi = min(len(text), max(e for _, e in spans) + WINDOW)
-    return {"text": text[lo:hi], "start": lo, "complete": lo == 0 and hi == len(text), "spans": [[s - lo, e - lo] for s, e in spans]}
+    return {"text": text[lo:hi], "start": lo, "complete": lo == 0 and hi == len(text), "to_end": hi == len(text), "spans": [[s - lo, e - lo] for s, e in spans]}
 
 
 def subset(expected, actual) -> bool:
@@ -135,6 +155,7 @@ def build_aob(tid: str, cfg: dict, wt: Path, mods) -> dict:
     need(raw_sha == cfg["sha256"], f"{cfg['raw']}: sha256 {raw_sha} does not match docs/DATA.md")
     need(sha(SCHEMA.read_bytes()) == SCHEMA_SHA, "schema 0.3 sha256 changed")
     rec = json.loads(raw_bytes)
+    say("trace read", f"{Path(cfg['raw']).name}: {len(rec['events']):,} records, {len(raw_bytes):,} bytes, sha256 {raw_sha[:12]}… matches docs/DATA.md")
 
     # 1. Frozen adapter + verifier; counts must match exactly.
     doc = adapter.adapt(rec, trace_ref=cfg["raw"], trace_sha256=raw_sha)
@@ -144,6 +165,8 @@ def build_aob(tid: str, cfg: dict, wt: Path, mods) -> dict:
     counts = {"entities": len(sem["entities"]), "events": len(sem["events"]), "evidence": len(sem["evidence"]),
               "delivers": sum(l["relation"] == "delivers" for l in sem["links"])}
     need(counts == cfg["expected"], f"adapter counts {counts} != expected {cfg['expected']}")
+    say("adapter", f"{counts['entities']} entities, {counts['events']} events, {counts['evidence']} evidence items, {counts['delivers']:,} delivers links (= expected)")
+    say("verifier", "0 errors")
     events = {e["id"]: e for e in sem["events"]}
     evidence = {x["id"]: x for x in sem["evidence"]}
     raw_events = {e["seq"]: e for e in rec["events"]}
@@ -243,11 +266,17 @@ def build_aob(tid: str, cfg: dict, wt: Path, mods) -> dict:
                        "origin": "unresolved" if not isinstance(x["source"], str) else "observed"}
         return t
 
+    say("matrix", f"{entry['file']} sha256 matches its manifest; {len(m['columns'])} model-call columns = adapter model events")
     claims, propositions, flags, facts, non_claims = [], [], [], [], []
     o3_ok = []
     if ann is not None:
+        CHECKED[0] = 0
         claims, propositions, non_claims, o3_ok = aob_claims(tid, ann, rec, sem, evidence, events, locator, compare, add_evidence, wt, raw_events)
         flags, facts = aob_flags(tid, ann, rec, sem, m, model, events, evidence, delivers, receivers, issuer, origin_of, text, add_evidence, raw_events, claims)
+        say("annotations checked", f"{plural(len(claims), 'claim')}, {plural(len(non_claims), 'non-claim')}, {plural(len(flags), 'flag')}; {plural(CHECKED[0], 'annotated value')} found verbatim in the raw trace")
+        say("O3 results", o3_line(claims, o3_ok))
+    else:
+        say("annotations checked", "none (no annotation file)")
 
     # Tool results vs the next same-agent call (computed; shown on the dashboard).
     tr = {"total": 0, "reached_next_call": 0, "reached_as_substitute": 0, "no_later_call": [], "lost": []}
@@ -282,6 +311,7 @@ def build_aob(tid: str, cfg: dict, wt: Path, mods) -> dict:
     for x in ev_out.values():
         x.pop("_spans", None)
     grid["overlays"] = overlays(claims, flags, columns, ann, model, events, issuer)
+    walk = aob_walkthrough(WALKTHROUGH[tid], claims, sem, events, evidence, raw_events, receivers, compare) if tid in WALKTHROUGH and claims else None
     head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     return {
         "contract": CONTRACT,
@@ -314,7 +344,58 @@ def build_aob(tid: str, cfg: dict, wt: Path, mods) -> dict:
         "flags": flags,
         "facts": facts,
         "checks": {"adapter_counts": counts, "verifier_errors": 0, "o3_matches_fixture": o3_ok},
+        **({"walkthrough": walk} if walk else {}),
     }
+
+
+def o3_line(claims, o3_ok=()):
+    tally = defaultdict(int)
+    for c in claims:
+        o = c.get("o3") or {}
+        tally[o.get("comparison") if o.get("status") == "computed" else o.get("status", "none")] += 1
+    out = " · ".join(f"{k} {v}" for k, v in sorted(tally.items()))
+    for x in o3_ok:
+        out += f"; {x['claim']} matches the fixture's expected result" if x["matches_fixture_expected"] else f"; {x['claim']} DOES NOT match the fixture"
+    return out
+
+
+def aob_walkthrough(cid, claims, sem, events, evidence, raw_events, receivers, compare):
+    """Data for the "How it's built" view: one claim followed from raw records to the screen.  Only record
+    metadata (types, ids, sizes, offsets, hash prefixes) is added; the item text stays in bundle.evidence."""
+    claim = next((c for c in claims if c["id"] == cid), None)
+    need(claim is not None and claim["links"], f"walkthrough claim {cid} is missing or has no evidence link")
+    rid = claim["links"][0]["evidence"]
+    tool_ev = events[evidence[rid]["produced_by"]]
+    rcv = receivers(rid)
+    need(rcv and claim["event"] in {e["id"] for e in rcv}, f"walkthrough: {rid} is not delivered to the claiming call")
+    first = rcv[0]
+    lo, hi = min(tool_ev["raw_ref"]["seq"]), min(first["raw_ref"]["seq"])
+    records = []
+    for seq in range(lo, hi + 1):
+        r = raw_events.get(seq)
+        if r is None:
+            continue
+        rec = {"seq": seq, **{k: r[k] for k in RECORD_FIELDS if r.get(k) is not None}}
+        for k in ("offset", "limit", "file_path"):
+            if isinstance(r.get("args"), dict) and k in r["args"]:
+                rec[f"args.{k}"] = r["args"][k]
+        for k in ("sha256", "output_sha256", "window_sha256"):
+            if r.get(k):
+                rec[f"{k}_prefix"] = r[k][:12]
+        records.append(rec)
+    links = [l for l in sem["links"] if l["relation"] == "delivers" and l["target"] == rid]
+    rsha = evidence[rid]["raw_ref"].get("sha256")
+    delivers = [{"event": l["source"], "locator": l["raw_ref"]["locator"],
+                 "message_index": int(m.group(1)) if (m := re.search(r"input_batches\[0\]\[(\d+)\]", l["raw_ref"]["locator"])) else None,
+                 "byte_identical": l["raw_ref"].get("sha256") == rsha} for l in links]
+    need(all(d["byte_identical"] for d in delivers), "walkthrough: a delivers link is not byte-identical")
+    comp = compare.Comparator(sem, {}, {})
+    o2 = [{"event": e, "item": rid, "value": comp.exposure_at(e, rid)["whole_item"]} for e in dict.fromkeys([first["id"], claim["event"]])]
+    say("walkthrough", f"{cid}: records {lo}–{hi}, {rid} delivered to {len(delivers)} calls (first {first['id']}), O2 at the claiming call {o2[-1]['value']}")
+    return {"claim": cid, "evidence": rid, "tool_event": tool_ev["id"], "first_receiver": first["id"], "note": WALKTHROUGH_NOTE,
+            "raw": {"origin": "observed", "steps": [lo, hi], "records": records},
+            "adapter": {"origin": "computed", "delivers": delivers, "verifier_errors": 0},
+            "comparator": {"origin": "computed", "operation": f"{compare.PROFILE} exposure_at (O2) and state_vs_evidence (O3)", "o2": o2}}
 
 
 def answer_text(rec, locator, loc):
@@ -597,6 +678,8 @@ def build_gomoku(compare) -> dict:
     need(sha(raw) == GOMOKU["sha256"], f"{GOMOKU['raw']}: sha256 does not match docs/DATA.md")
     need(sha(SCHEMA.read_bytes()) == SCHEMA_SHA, "schema 0.3 sha256 changed")
     rec = json.loads(raw)[GOMOKU["index"]]
+    say("trace read", f"{Path(GOMOKU['raw']).name} [index {GOMOKU['index']}]: ChatDev trace {rec['trace_id']}, sha256 {sha(raw)[:12]}… matches docs/DATA.md")
+    CHECKED[0] = 0
     need(rec["mas_name"] == "ChatDev" and rec["trace_id"] == 7, "MAST index 7 is not the ChatDev Gomoku trace")
     lines = rec["trace"]["trajectory"].split("\n")
     ann_path = ANN_DIR / "gomoku.json"
@@ -604,29 +687,130 @@ def build_gomoku(compare) -> dict:
     ann = json.loads(ann_path.read_text(encoding="utf-8"))
     need(len(lines) == ann["dataset"]["lines"], f"trajectory has {len(lines)} lines, expected {ann['dataset']['lines']}")
 
+    cited = set()
+
     def cite(c, what):
         need(c["contains"] in lines[c["line"] - 1], f"{what}: line {c['line']} does not contain {c['contains']!r}")
-        return {"line": c["line"], "text": lines[c["line"] - 1][:200]}
+        cited.add(c["line"])
+        return {"line": c["line"], "text": lines[c["line"] - 1][:200], "to_end": len(lines[c["line"] - 1]) <= 200}
 
     start_chats = [i + 1 for i, l in enumerate(lines) if "**[Start Chat]**" in l]
-    need(len(start_chats) == 12, f"expected 12 LLM calls ([Start Chat] lines), found {len(start_chats)}")
-    roles = [{"id": r["id"], "label": r["label"], "sub": r.get("note") or r["kind"], "kind": "unresolved" if r["kind"] == "unresolved" else r["kind"],
-              "parent": None, "origin": "unresolved" if r["kind"] == "unresolved" else "hand-reconstructed",
-              "cite": cite(r["cite"], r["id"]) if r.get("cite") else None} for r in ann["roles"]]
-    evs = sorted(ann["events"], key=lambda e: e["line"])
-    llm_lines = sorted(e["line"] for e in evs if e.get("llm_call", True))
-    need(llm_lines == start_chats, "reconstructed LLM calls do not match the [Start Chat] lines")
+    need(len(start_chats) == 12, f"expected 12 [Start Chat] lines, found {len(start_chats)}")
+    usages = [i + 1 for i, l in enumerate(lines) if "**[OpenAI_Usage_Info Receive]**" in l]
+    say("adapter", "none for ChatDev: skeleton hand-reconstructed from schema §14 and the full-log reconstruction")
+    # The full-log reconstruction (gomoku.full.json) extends §14 to every LLM call, role and framework record;
+    # gomoku.json (the §14 annotation) is read unchanged.
+    full_path = ANN_DIR / "gomoku.full.json"
+    need(full_path.exists(), f"{rel(full_path)} is missing")
+    full = json.loads(full_path.read_text(encoding="utf-8"))
+    need(full["dataset"] == ann["dataset"], "gomoku.full.json describes a different dataset")
+    calls = {c["id"]: c for c in full["calls"]}
+    need(sorted(c["usage"] for c in calls.values()) == usages, f"reconstructed LLM calls do not match the {len(usages)} usage records")
+    need(sorted(c["start_chat"] for c in calls.values() if c["start_chat"]) == start_chats, "reconstructed calls do not match the [Start Chat] lines")
+    role_full = {r["id"]: r for r in ann["roles"]} | {r["id"]: r for r in full["roles"]}
+    label_of = {r["id"]: r.get("name", r["label"]) for r in role_full.values()}
+    ann_ev_by_id = {e["id"]: e for e in ann["events"]}
+    evs = []
+    for e in ann["events"]:
+        if e["role"] == "$not_reconstructed":
+            need(e["id"] in calls and "role" in calls[e["id"]], f"{e['id']}: §14 left it unreconstructed and the full reconstruction does not attribute it")
+            continue
+        evs.append(dict(e))
+    for c in full["calls"]:
+        if c["id"] not in ann_ev_by_id or ann_ev_by_id[c["id"]]["role"] == "$not_reconstructed":
+            evs.append({"id": c["id"], "role": c["role"], "label": c["label"], "phase": c["phase"], "produces": c.get("produces"), "line": c["start_chat"] or c["usage"],
+                        "cite": {"line": c["start_chat"] or c["usage"], "contains": "**[Start Chat]**" if c["start_chat"] else "**[OpenAI_Usage_Info Receive]**"}})
+    evs.sort(key=lambda e: e["line"])
+    for e in evs:
+        c = calls.get(e["id"])
+        if not c:
+            need(e.get("llm_call") is False, f"{e['id']}: LLM event without a usage record")
+            continue
+        # Each call: its usage record, its reply header naming the replying role and the chat pair, and nothing between.
+        need(lines[c["usage"]].strip() == f"prompt_tokens: {c['prompt_tokens']}", f"{e['id']}: prompt_tokens at L{c['usage'] + 1} is not {c['prompt_tokens']}")
+        reply = lines[c["reply"] - 1]
+        partner = label_of[c["opened_by"] or c["reply_to"]]
+        phase = c.get("phase") or ann_ev_by_id[e["id"]]["phase"].split(",")[0]
+        need(f"INFO] {label_of[e['role']]}: **" in reply and f"on : {phase}, turn 0**" in reply and {f"{label_of[e['role']]}<->{partner}", f"{partner}<->{label_of[e['role']]}"} & {reply.split("**")[1].split(" on : ")[0]},
+             f"{e['id']}: reply header at L{c['reply']} does not name {label_of[e['role']]} replying to {partner} in {phase}")
+        if c["start_chat"]:
+            need(f"INFO] {label_of[c['opened_by']]}: **[Start Chat]**" in lines[c["start_chat"] - 1], f"{e['id']}: [Start Chat] at L{c['start_chat']} is not by {label_of[c['opened_by']]}")
+            need(not any(u for u in usages if c["start_chat"] < u < c["usage"]), f"{e['id']}: another usage record precedes its own")
+        cited.update(x for x in (c["start_chat"], c["usage"], c["reply"]) if x)
+        who = f"opened by {label_of[c['opened_by']]} (L{c['start_chat']})" if c["start_chat"] else f"reply to {label_of[c['reply_to']]}; input not logged"
+        e["phase"] = f"{e.get('phase') or c['phase']} · {who}"
+        e["tokens"] = e.get("tokens") or f"{c['prompt_tokens']} reported (L{c['usage'] + 1})"
+        e["unknown_input"] = c["start_chat"] is None
+    for t in full["token_totals"]:
+        need(t["contains"] in lines[t["line"] - 1], f"token total at L{t['line']} does not contain {t['contains']!r}")
+        total = sum(c["prompt_tokens"] for c in sorted(calls.values(), key=lambda c: c["usage"])[:t["calls"]])
+        need(t["contains"].endswith(f"={total}"), f"token total at L{t['line']}: the first {t['calls']} calls sum to {total}")
+        cited.add(t["line"])
+    for x in full["framework_events"]:
+        cite({"line": x["line"], "contains": x["contains"]}, x["id"])
+    has_claim = {next(e["role"] for e in evs if e["id"] == c["event"]) for c in ann["claims"]}
+    n_calls = defaultdict(int)
+    for e in evs:
+        if e["id"] in calls:
+            n_calls[e["role"]] += 1
+    roles = []
+    for rid in full["role_order"]:
+        r = role_full[rid]
+        sub = full["role_notes"].get(rid) or r.get("note") or r["kind"]
+        if r["kind"] == "agent" and rid not in has_claim:
+            sub += " · claims not annotated"
+        roles.append({"id": rid, "label": r["label"], "sub": sub, "kind": r["kind"], "name": r.get("name"), "parent": None, "origin": "hand-reconstructed",
+                      "llm_calls": n_calls[rid], "claims_annotated": rid in has_claim, "cite": cite(r["cite"], rid) if r.get("cite") else None})
+    need(not any(e["role"] == "$not_reconstructed" for e in evs), "an event is still unreconstructed")
     ev_out = {}
     for x in ann["evidence"]:
         c = cite(x["cite"], x["id"])
         ev_out[x["id"]] = {"id": x["id"], "label": x["label"], "step": None, "lines": x["lines"], "tool": None, "kind": "log_item",
                            "source": x["source"], "produced_by": x.get("produced_by"), "locator": f"trace.trajectory L{x['lines'][0]}",
-                           "sha256": None, "size": None, "excerpt": {"text": c["text"], "start": 0, "complete": False, "spans": []},
+                           "sha256": None, "size": None, "excerpt": {"text": c["text"], "start": 0, "complete": c["to_end"], "to_end": c["to_end"], "spans": []},
                            "origin": "unresolved" if x["source"] == "$unresolved" else "hand-reconstructed"}
+    for x in full["evidence"]:
+        c = cite(x["cite"], x["id"])
+        ev_out[x["id"]] = {"id": x["id"], "label": x["label"], "step": None, "lines": x["lines"], "tool": None, "kind": "log_item",
+                           "source": x["source"], "produced_by": x["produced_by"], "locator": f"trace.trajectory L{x['lines'][0]}",
+                           "sha256": None, "size": None, "excerpt": {"text": c["text"], "start": 0, "complete": c["to_end"], "to_end": c["to_end"], "spans": []},
+                           "origin": "hand-reconstructed", "note": x.get("note")}
     deliv = defaultdict(set)
     for d in ann["delivers"]:
         for t in d["to"]:
             deliv[t].add(d["item"])
+    # Full-log deliveries: the item's text must be inside the receiving call's logged [Start Chat] input.
+    def in_input(target, a, b=None):
+        c = calls[target]
+        need(c["start_chat"] and c["start_chat"] < a <= (b or a) < c["usage"], f"{target}: L{a} is outside its logged input")
+    full_delivers = []
+    for d in full["delivers"]:
+        need(d["item"] in ev_out, f"delivers item {d['item']} unknown")
+        for t, ln in d["to"].items():
+            in_input(t, ln)
+            need(d["contains"] in lines[ln - 1], f"{d['item']} -> {t}: L{ln} does not contain {d['contains']!r}")
+            cited.add(ln)
+            deliv[t].add(d["item"])
+        full_delivers.append({"item": d["item"], "to": list(d["to"]), "lines": ", ".join(f"L{v}" for v in d["to"].values()), "at": {t: f"L{v}" for t, v in d["to"].items()}})
+
+    def code_lines(a, b):
+        out, inside = [], False
+        for i in range(a, b + 1):
+            if lines[i - 1].strip().startswith("```"):
+                inside = not inside
+            elif inside and lines[i - 1].strip():
+                out.append(lines[i - 1].rstrip())
+        return out
+    for d in full["block_delivers"]:
+        src = code_lines(*d["from_reply"])
+        need(src, f"{d['item']}: no code lines in L{d['from_reply'][0]}-{d['from_reply'][1]}")
+        for t, (a, b) in d["to"].items():
+            in_input(t, a, b)
+            need(code_lines(a, b) == src, f"{d['item']} -> {t}: L{a}-{b} does not hold its {len(src)} code lines in order")
+            cited.update((a, b))
+            deliv[t].add(d["item"])
+        full_delivers.append({"item": d["item"], "to": list(d["to"]), "lines": ", ".join(f"L{a}–{b}" for a, b in d["to"].values()) + f" ({d['check']})",
+                              "at": {t: f"L{a}–{b}, {d['check']}" for t, (a, b) in d["to"].items()}})
     # Columns: events in log-line order.
     columns, sk_events = [], []
     seen_by_role = defaultdict(set)
@@ -635,30 +819,43 @@ def build_gomoku(compare) -> dict:
         first = [x for x in sorted(deliv[e["id"]]) if x not in seen_by_role[e["role"]]]
         seen_by_role[e["role"]].update(deliv[e["id"]])
         origin = "unresolved" if e["role"] == "$not_reconstructed" else "hand-reconstructed"
+        unknown = e.get("unknown_input", False)
         columns.append({"id": e["id"], "order": e["line"], "row": e["role"], "steps": [e["line"], e["line"]], "label": e["label"],
-                        "delivers": len(deliv[e["id"]]), "first": len(first), "delegation_out": False, "delegation_in": False,
+                        "delivers": None if unknown else len(deliv[e["id"]]), "first": None if unknown else len(first), "delegation_out": False, "delegation_in": False,
                         "overlaps": 0, "tools": [], "origin": origin, "phase": e.get("phase")})
         sk_events.append({"id": e["id"], "kind": "model_call" if e.get("llm_call", True) else "check", "order": e["line"], "steps": [e["line"], e["line"]],
                           "agent": e["role"], "label": e["label"], "phase": e.get("phase"), "produces": e.get("produces"),
                           "messages": e.get("messages"), "tokens": e.get("tokens"), "cite": c, "origin": origin})
     col_ids = {c["id"] for c in columns}
-    edges = []
-    for d in ann["delivers"]:
-        src = ann_ev(ann, d["item"]).get("produced_by")
-        for t in d["to"]:
+    row_of = {c["id"]: c["row"] for c in columns}
+    order_of = {c["id"]: c["order"] for c in columns}
+    # A handoff is drawn where an item produced in one row first reaches another row (the matrix's "new to that
+    # agent" rule); later deliveries of the same item to that row are counted in the input track, not drawn.
+    edges, reached = [], set()
+    for d in sorted([*ann["delivers"], *full_delivers], key=lambda d: min(order_of[t] for t in d["to"])):
+        src = ev_out[d["item"]].get("produced_by")
+        for t in sorted(d["to"], key=order_of.get):
             need(t in col_ids, f"delivers target {t} unknown")
-            if src and src in col_ids and next(c for c in columns if c["id"] == src)["row"] != next(c for c in columns if c["id"] == t)["row"]:
-                edges.append({"from": src, "to": t, "via": f"{d['item']} delivered ({d['lines']})", "item": d["item"], "origin": "hand-reconstructed"})
-    grid = {"origin": "hand-reconstructed", "source_contract": None, "axis": "LLM calls and the test gate in log-line order (§14)",
+            if src and src in col_ids and row_of[src] != row_of[t] and (d["item"], row_of[t]) not in reached:
+                edges.append({"from": src, "to": t, "via": f"{ev_out[d['item']]['label']} delivered ({d.get('at', {}).get(t, d['lines'])})", "item": d["item"], "origin": "hand-reconstructed"})
+            reached.add((d["item"], row_of[t]))
+    edges.sort(key=lambda e: (order_of[e["to"]], order_of[e["from"]]))
+    for x in full["framework_events"]:
+        sk_events.append({"id": x["id"], "kind": x["kind"], "order": x["line"], "steps": [x["line"], x["line"]], "agent": x.get("agent", "framework"),
+                          "label": x["label"], "phase": x.get("phase"), "produces": None, "messages": None, "tokens": None,
+                          "cite": cite({"line": x["line"], "contains": x["contains"]}, x["id"]), "origin": "hand-reconstructed"})
+    sk_events.sort(key=lambda e: e["order"])
+    grid = {"origin": "hand-reconstructed", "source_contract": None, "axis": "LLM calls (usage records) and the test gate in log-line order",
             "rows": [{k: v for k, v in r.items() if k != "cite"} for r in roles], "columns": columns, "edges": edges, "delivery_track": True,
-            "max_delivers": max(c["delivers"] for c in columns), "overlays": [],
-            "note": "No matrix builder exists for ChatDev logs: this grid is hand-reconstructed from schema §14 (roles × events), with every cited log line checked. Columns are log-line order.",
+            "max_delivers": max(c["delivers"] or 0 for c in columns), "overlays": [],
+            "note": "No matrix builder exists for ChatDev logs: this grid is hand-reconstructed (roles × LLM calls) from schema §14 and the full log, with every cited log line checked. "
+                    "Each column is one LLM call (one usage record) or the test gate; the opening message of each chat is a framework phase prompt, not a call. Columns are log-line order.",
             "order_caveat": "Log-line order only; it implies no precedence beyond what §14 states."}
 
     # Claims and O3 over a hand-built 0.3 slice.
     claims, props, non_claims = [], [], []
-    ents = [{"id": r["id"], "kind": "agent" if r["kind"] == "agent" else "framework"} for r in ann["roles"] if r["id"] != "$not_reconstructed"]
-    s_events = [{"id": e["id"], "origin": e["role"] if e["role"] != "$not_reconstructed" else {"$unresolved": True, "candidates": ["role:programmer", "role:reviewer"]}, "order": e["line"], "raw_ref": {"line": e["line"]}} for e in evs]
+    ents = [{"id": r["id"], "kind": "agent" if r["kind"] == "agent" else "framework"} for r in roles]
+    s_events = [{"id": e["id"], "origin": e["role"], "order": e["line"], "raw_ref": {"line": e["line"]}} for e in evs]
     s_evidence = [{"id": x["id"], "source": x["source"] if x["source"] != "$unresolved" else {"$unresolved": True, "candidates": ["framework", "environment"]},
                    "produced_by": x.get("produced_by"), "raw_ref": {"line": x["lines"][0]}} for x in ann["evidence"]]
     s_links = [{"relation": "delivers", "source": t, "target": d["item"], "raw_ref": {"lines": d["lines"]}} for d in ann["delivers"] for t in d["to"]]
@@ -677,6 +874,9 @@ def build_gomoku(compare) -> dict:
             s_links.append({"relation": l["relation"], "source": p["id"], "target": l["evidence"], "raw_ref": {"whole_item": True, "grounding": l["grounding"]}})
     comp = compare.Comparator({"entities": ents, "events": s_events, "evidence": s_evidence, "claims": s_claims, "propositions": s_props,
                                "states": s_states, "links": s_links}, {}, texts)
+    say("annotations checked", f"{plural(len(cited), 'cited log line')} checked; {len(calls)} LLM calls match the {len(usages)} usage records "
+                               f"({len(start_chats)} with a logged [Start Chat] input); {len(roles)} roles, {len(full['framework_events'])} framework, config and test records; "
+                               f"{plural(len(ann['claims']), 'claim')}, {plural(len(ann['flags']), 'flag')}; {plural(CHECKED[0], 'claim span')} found verbatim")
     for i, c in enumerate(ann["claims"]):
         try:
             o3 = o3_summary(comp.state_vs_evidence(i))
@@ -697,25 +897,34 @@ def build_gomoku(compare) -> dict:
     flags = [{"id": f["id"], "title": f["title"], "kind": f["kind"], "text": f["text"], "origin": "hand-reconstructed", "caveat": None,
               "events": f["events"], "anchors": f["events"], "evidence": f.get("evidence", []), "computed": []} for f in ann["flags"]]
     nd = ann["not_delivered"][0]
-    delivery = {"delivered": [{"item": d["item"], "to": d["to"], "lines": d["lines"], "value": "DELIVERED", "origin": "hand-reconstructed"} for d in ann["delivers"]],
+    merged = {}
+    for d in [*ann["delivers"], *full_delivers]:
+        m = merged.setdefault(d["item"], {"item": d["item"], "to": [], "lines": [], "value": "DELIVERED", "origin": "hand-reconstructed"})
+        m["to"] += [t for t in d["to"] if t not in m["to"]]
+        m["lines"].append(d["lines"])
+    delivery = {"source": "§14 and the full-log reconstruction",
+                "delivered": [dict(m, to=sorted(m["to"], key=order_of.get), lines="; ".join(m["lines"])) for m in merged.values()],
                 "not_delivered": [{"item": nd["item"], "to": nd["to"], "value": "NOT_DELIVERED", "coverage": nd["coverage"], "origin": "hand-reconstructed"}]}
     grid["overlays"] = overlays(claims, flags, columns, None, None, None, None)
     return {
         "contract": CONTRACT,
         "trace": {"id": "gomoku", "label": GOMOKU["label"], "kind": "multi-agent", "framework": "ChatDev (MAST / MAD, ProgramDev)", "model": "GPT-4o",
                   "scenario": "Gomoku (ProgramDev)", "status": "completed (run ends L3388)", "answer": None, "summary": None},
-        "honesty": {"annotations": HAND, "skeleton": "hand-reconstructed from schema §14; every cited log line is checked against the dataset",
+        "honesty": {"annotations": HAND, "skeleton": "hand-reconstructed from schema §14 and the full log; every cited log line is checked against the dataset",
                     "rules": ["Delivered means presence in an LLM call's rendered input, not use.",
                               "NOT DELIVERED is shown only where coverage is COMPLETE (§14.2); elsewhere non-delivery would be UNKNOWN.",
-                              "Columns are log-line order only."]},
+                              "Columns are log-line order only.",
+                              "A call whose input is not logged has delivery UNKNOWN; a role with no annotated claim is shown as not annotated, and its silence is not read as agreement."]},
         "provenance": {"raw_trace": f"{GOMOKU['raw']} [index {GOMOKU['index']}]", "raw_trace_sha256": GOMOKU["sha256"], "adapter": None, "verifier": None,
                        "compare": compare.PROFILE, "worktree_head": None, "schema_sha256": SCHEMA_SHA, "matrix_file": None, "matrix_sha256": None,
                        "annotation_file": rel(ann_path), "annotation_sha256": sha(ann_path.read_bytes()), "builder": "scripts/explorer/build_bundle.py",
-                       "skeleton_source": "docs/agenttrace.semantic.0.3.md §14"},
+                       "skeleton_source": "docs/agenttrace.semantic.0.3.md §14", "skeleton_extension_file": rel(full_path), "skeleton_extension_sha256": sha(full_path.read_bytes())},
         "layers": {"skeleton": True, "matrix": True, "claims": True, "evidence": True, "delivery": True, "o3": True, "flags": True},
         "skeleton": {"origin": "hand-reconstructed", "agents": roles, "events": sk_events, "handoffs": edges,
-                     "counts": {"llm_calls": 12, "reconstructed_llm_calls": sum(1 for e in evs if e.get("llm_call", True) and e["role"] != "$not_reconstructed"),
-                                "checks": sum(1 for e in evs if not e.get("llm_call", True)), "evidence": len(ann["evidence"]), "delivers": len(s_links) - sum(len(p["links"]) for p in ann["propositions"])},
+                     "counts": {"llm_calls": len(calls), "start_chat_calls": len(start_chats), "unlogged_input_calls": sum(1 for c in calls.values() if not c["start_chat"]),
+                                "reconstructed_llm_calls": sum(1 for e in ann["events"] if e.get("llm_call", True) and e["role"] != "$not_reconstructed"),
+                                "roles": len(roles), "framework_records": len(full["framework_events"]),
+                                "checks": sum(1 for e in evs if not e.get("llm_call", True)), "evidence": len(ev_out), "delivers": sum(len(v) for v in deliv.values())},
                      "counts_origin": "hand-reconstructed", "skipped": [], "delivery": delivery},
         "matrix": grid,
         "evidence": ev_out,
@@ -724,8 +933,17 @@ def build_gomoku(compare) -> dict:
         "non_claims": non_claims,
         "flags": flags,
         "facts": [{"id": "fact:coverage", "origin": "hand-reconstructed", "title": "Coverage",
-                   "text": "o200k token residual is a constant +2 on all 12 LLM calls, so coverage is COMPLETE (§14.2)."}],
-        "checks": {"cited_lines_checked": True, "llm_calls": len(start_chats)},
+                   "text": "o200k token residual is a constant +2 on all 12 LLM calls, so coverage is COMPLETE (§14.2)."},
+                  {"id": "fact:calls", "origin": "hand-reconstructed", "title": "LLM calls in the log", "discrepancy": True,
+                   "text": f"The log records {len(calls)} usage records (one per LLM call); the framework's prompt-token totals at L2448 and L3378 equal their sums. "
+                           f"{len(start_chats)} calls open with a logged [Start Chat] input, which is what §14.2 counts as its 12 calls. "
+                           "In DemandAnalysis two usage records (L101, L110) precede the CPO's and the CEO's replies (L118, L131) and are paired with them in log order. "
+                           "The CEO's DemandAnalysis reply (usage L110) has no logged input, so what reached it is UNKNOWN."},
+                  {"id": "fact:roles", "origin": "hand-reconstructed", "title": "Roles",
+                   "text": "; ".join(f"{r['label']}: {plural(r['llm_calls'], 'LLM call')}{'' if r['claims_annotated'] or r['kind'] != 'agent' else ', claims not annotated'}" for r in roles)
+                           + ". The Counselor only opens Reflection with the framework's prompt; the test gate's output is fixed text. A role without annotated claims holds no state here: silence is not agreement."},
+                  *({"id": f"fact:unresolved:{i}", "origin": "hand-reconstructed", "title": "Not established", "text": t} for i, t in enumerate(full["unresolved"]))],
+        "checks": {"cited_lines_checked": True, "llm_calls": len(calls), "start_chat_calls": len(start_chats)},
     }
 
 
@@ -742,6 +960,12 @@ def write(bundle: dict) -> tuple[str, str]:
     name = f"{bundle['trace']['id']}.bundle.json"
     (OUT_DIR / name).write_text(body, encoding="utf-8")
     return name, sha(body)
+
+
+def show_report() -> None:
+    w = max((len(st) for st, _ in REPORT), default=0)
+    for st, msg in REPORT:
+        print(f"  {st.ljust(w)}  {msg}")
 
 
 def update_manifest(entries: dict) -> None:
@@ -765,22 +989,28 @@ def main(argv=None) -> int:
 
     entries, failed = {}, False
     for tid in [args.only] if args.only else [*AOB, "gomoku"]:
+        REPORT.clear()
+        print(f"\n== {tid}")
         try:
             bundle = build_gomoku(compare) if tid == "gomoku" else build_aob(tid, AOB[tid], args.worktree.resolve(), (adapter, verify, locator, compare))
             problems = validate(bundle)
             need(not problems, f"bundle validation failed: {problems[:5]}")
         except Mismatch as e:
+            show_report()
             print(f"STOPPED {tid}: {e}", file=sys.stderr)
             failed = True
             continue
         name, digest = write(bundle)
         entries[tid] = {"trace_id": tid, "file": name, "sha256": digest, "contract": CONTRACT, "label": bundle["trace"]["label"], "kind": bundle["trace"]["kind"]}
-        c = bundle["checks"]
-        print(f"{tid}: {len(bundle['matrix']['rows'])} rows × {len(bundle['matrix']['columns'])} columns, {len(bundle['claims'])} claims, "
-              f"{len(bundle['flags'])} flags, {len(bundle['matrix']['overlays'])} overlays"
-              + (f", adapter {c['adapter_counts']}, verifier 0 errors" if "adapter_counts" in c else "") + f" -> src/explorer/data/{name}")
+        if tid == "gomoku":
+            say("O3 results", o3_line(bundle["claims"]))
+        say("bundle written", f"src/explorer/data/{name} ({(OUT_DIR / name).stat().st_size / 1024:.0f} KB, sha256 {digest[:12]}…): "
+                              f"{plural(len(bundle['matrix']['rows']), 'row')} × {plural(len(bundle['matrix']['columns']), 'column')}, {plural(len(bundle['claims']), 'claim')}, "
+                              f"{plural(len(bundle['flags']), 'flag')}, validator OK")
+        show_report()
     if entries:
         update_manifest(entries)
+        print(f"\nmanifest: src/explorer/data/index.json ({len(entries)} bundle(s) updated)")
     return 1 if failed else 0
 
 

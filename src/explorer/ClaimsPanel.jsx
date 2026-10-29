@@ -71,6 +71,16 @@ function Chain({ b, c, onShowInMatrix }) {
                 {l.grounds && <p style={{ ...p, color: v("muted"), fontSize: 12 }}>{l.grounds}</p>}
                 {l.grounding && <p style={{ ...p, color: v("muted"), fontSize: 12 }}>{l.grounding}</p>}
                 <Excerpt excerpt={x?.excerpt} maxHeight={180} />
+                {x && (
+                  <details data-testid="source-details" style={{ marginTop: 6 }}>
+                    <summary style={{ fontSize: 12.5, color: v("muted"), cursor: "pointer" }}>Source details</summary>
+                    <dl style={{ display: "grid", gridTemplateColumns: "max-content minmax(0,1fr)", gap: "3px 12px", margin: "6px 0 0", fontSize: 12.5 }}>
+                      {[["evidence id", x.id], ["locator", x.locator], ["produced by", x.produced_by ?? "external (no producing event)"], ["source class", x.source],
+                        x.size != null && ["raw size", `${x.size.toLocaleString("en-US")} chars`], x.sha256 && ["sha256", x.sha256]].filter(Boolean).map(([k, val]) => [
+                        <dt key={`${k}k`} style={{ color: v("muted") }}>{k}</dt>, <dd key={`${k}v`} style={{ margin: 0, ...mono, wordBreak: "break-all" }}>{val}</dd>])}
+                    </dl>
+                  </details>
+                )}
               </div>
             );
           })}

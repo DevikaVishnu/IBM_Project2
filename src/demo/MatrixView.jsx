@@ -127,13 +127,14 @@ function useSize(ref) {
   return size;
 }
 
-export function Matrix({ m, d, sel, onSelect, onActivate, layout }) {
+// minCol / maxCol are optional; the defaults are the archive tab's column widths.
+export function Matrix({ m, d, sel, onSelect, onActivate, layout, minCol = MIN_COL, maxCol = MAX_COL }) {
   const outer = useRef(null);
   const scroller = useRef(null);
   const { w, h } = useSize(outer);
   const n = d.cols.length;
   const telemetry = m.telemetry.delivery === "present";
-  const colW = clamp(Math.floor((w - LABEL_W - 4) / Math.max(n, 1)), MIN_COL, MAX_COL);
+  const colW = clamp(Math.floor((w - LABEL_W - 4) / Math.max(n, 1)), minCol, maxCol);
   const weights = d.rows.map(r => (r.agent ? 1 : 0.55));
   const totalW = weights.reduce((a, b) => a + b, 0);
   let laneH = 64, trackH = telemetry ? 120 : 44;

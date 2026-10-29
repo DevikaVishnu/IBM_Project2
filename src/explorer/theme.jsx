@@ -141,7 +141,7 @@ export function Excerpt({ excerpt, maxHeight = 220 }) {
   return (
     <pre tabIndex={0} aria-label="Evidence excerpt" style={{ ...mono, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, padding: "8px 10px",
       background: v("canvas"), border: `1px solid ${v("line")}`, borderRadius: 8, maxHeight, overflow: "auto", color: v("ink") }}>
-      {excerpt.start > 0 && <span style={{ color: v("muted") }}>…</span>}{parts}{!excerpt.complete && <span style={{ color: v("muted") }}> …</span>}
+      {excerpt.start > 0 && <span style={{ color: v("muted") }}>…</span>}{parts}{!(excerpt.to_end ?? excerpt.complete) && <span style={{ color: v("muted") }}> …</span>}
     </pre>
   );
 }

@@ -164,6 +164,14 @@ $PY -m pytest scripts/explorer/test_explorer_bundles.py -q -p no:cacheprovider
 
 In zsh, call `$PY` as `${=PY}`.
 
+**Running it live.** From the AP root, one command rebuilds all three bundles and prints a stage-by-stage report for each trace (trace read → adapter counts → verifier errors → matrix → annotations checked → O3 results → bundle written). For run 621 the report also covers the "How it's built" walkthrough:
+
+```sh
+env -u OTEL_TRACES_FILE PYTHONPATH=../AssetOpsBench-agenttrace-spec/src ../AssetOpsBench-agenttrace-spec/.venv/bin/python scripts/explorer/build_bundle.py
+```
+
+Add `--only aob-621` for one trace. The output is byte-identical on every run, so running it during a demo does not change what the Explorer shows.
+
 **What the builder checks.** It stops with exit code 1 and the reason on any mismatch, and writes nothing for that trace:
 - the adapter counts must be exactly:
   - 621: 21 entities, 61 events, 127 evidence, 1,454 delivers;
