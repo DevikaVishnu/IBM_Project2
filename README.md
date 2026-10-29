@@ -1,5 +1,7 @@
 # AgentTrace
 
+> To get the data the demos need (public datasets, the project's traces, building demo data), see [docs/DATA.md](docs/DATA.md).
+
 **A framework-independent semantic observability layer for agentic AI: it records what information existed in a run, what reached each agent, what agents asserted, and what was verified.**
 
 > Developed as part of an IBM Research collaboration on *Mission Control for Agentic AI*.
