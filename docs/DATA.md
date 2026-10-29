@@ -10,7 +10,8 @@ This repo holds code, schemas and documentation. The data the demos read is **no
 | `data/assetopsbench/` | AssetOpsBench scenario lists (public, fetched) | Only `fetch.sh` |
 | `data/assetopsbench/runs/` | Raw AssetOpsBench run traces: native `*.json`, `*.instrumented.json`, `otel-*.jsonl` | No (ignored) |
 | `src/demo/data/` | Demo data built from those traces (`*.demo.json`, `matrices/*.matrix.json`, `matrices/index.json`) | No (ignored) |
-| `src/explorer/data/` | Planned: data for the new Belief Explorer. It does not exist yet. | Planned to stay local-only, like `src/demo/data/` |
+| `src/explorer/data/` | Belief Explorer trace bundles (`*.bundle.json`, `index.json`) | No (ignored) |
+| `src/explorer/annotations/` | Hand annotations for the Belief Explorer (`<trace>.json`); illustrative, not gold | No (ignored) |
 
 Raw traces and built demo data are gitignored and kept private. Raw traces contain complete model inputs and tool results. The built demo data contains trace excerpts, and publishing them waits on a licence check of the AssetOpsBench data and on the annotation pilot. Never commit either.
 
@@ -139,12 +140,59 @@ Both builders work only with the exact traces in §3 when a fixture is used.
 
 ### Belief Explorer data
 
-To be written when the Belief Explorer data builder exists.
+The Belief Explorer tab reads one bundle per trace from `src/explorer/data/`. The bundle contract is `agenttrace-explorer-bundle/0.1`, described in `src/explorer/CONTRACT.md`. Three traces are built: `aob-621`, `aob-sc3-B` and `gomoku`.
+
+**Inputs.** Everything below must be present locally:
+- the raw traces in §3 (621 and sc3-B), checked by sha256;
+- the MAST file in §2 (Gomoku), checked by sha256;
+- the matrix files `src/demo/data/matrices/aob-621.matrix.json` and `aob-sc3-B.matrix.json` with their manifest;
+- the worktree and its `.venv`, as above;
+- the hand annotations in `src/explorer/annotations/{aob-621,aob-sc3-B,gomoku}.json` (local-only, available from the maintainer).
+
+**Build order.** Build the matrices first if they are missing (with the 0.3 fixtures, as the existing matrix files record in their provenance), then the bundles, then validate and test:
+
+```sh
+WT=../AssetOpsBench-agenttrace-spec
+PY="env -u OTEL_TRACES_FILE PYTHONPATH=$WT/src $WT/.venv/bin/python"
+FX=$WT/src/agent/deep_agent/tests/fixtures/agenttrace_semantic_0_3
+$PY scripts/demo/build_matrix.py --trace data/assetopsbench/runs/aob-621-sonnet5-deep-fileobs-20261013.instrumented.json --run-id aob-621 --fixture $FX/aob-621.semantic.json
+$PY scripts/demo/build_matrix.py --trace data/assetopsbench/runs/aob-sc3-sonnet5-deep-spec-B-20261014.instrumented.json --run-id aob-sc3-B --fixture $FX/aob-sc3-B.semantic.json
+$PY scripts/explorer/build_bundle.py                 # all three; --only <trace-id> for one
+$PY scripts/explorer/validate_bundle.py              # plain Python also works
+$PY -m pytest scripts/explorer/test_explorer_bundles.py -q -p no:cacheprovider
+```
+
+In zsh, call `$PY` as `${=PY}`.
+
+**Running it live.** From the AP root, one command rebuilds all three bundles and prints a stage-by-stage report for each trace (trace read → adapter counts → verifier errors → matrix → annotations checked → O3 results → bundle written). For run 621 the report also covers the "How it's built" walkthrough:
+
+```sh
+env -u OTEL_TRACES_FILE PYTHONPATH=../AssetOpsBench-agenttrace-spec/src ../AssetOpsBench-agenttrace-spec/.venv/bin/python scripts/explorer/build_bundle.py
+```
+
+Add `--only aob-621` for one trace. The output is byte-identical on every run, so running it during a demo does not change what the Explorer shows.
+
+**What the builder checks.** It stops with exit code 1 and the reason on any mismatch, and writes nothing for that trace:
+- the adapter counts must be exactly:
+  - 621: 21 entities, 61 events, 127 evidence, 1,454 delivers;
+  - sc3-B: 24 entities, 159 events, 268 evidence, 4,713 delivers;
+- the verifier must report 0 errors;
+- every annotated value must occur in the raw trace;
+- every cited Gomoku log line must contain the cited text;
+- the 621 June 10 O3 result must match the fixture's expected result.
+
+The output is deterministic, so a rebuild is byte-identical.
 
 ## 6. What you'll see without the data
 
-The app builds and runs without any local data (`npm install`, then `npm run dev`). In the `#demo` tab, both views then show:
+The app builds and runs without any local data (`npm install`, then `npm run dev`). In the `#demo` tab ("Earlier demo (archive)"), both views then show:
 
 > Demo data is local-only. See docs/DATA.md to get or build it.
 
-Once the data is in `src/demo/data/`, restart the dev server (or rebuild) and the views load it.
+The Belief Explorer tab (`#explorer`) shows:
+
+> Explorer data is local-only. See docs/DATA.md.
+
+The AssetOpsBench tab (`#assetops`) says its run traces are local-only and asks for the `assetops-*-events.json` files in `runs/assetopsbench/` (gitignored).
+
+Once the data is in `src/demo/data/`, `src/explorer/data/` and `runs/assetopsbench/`, restart the dev server (or rebuild) and the views load it.
