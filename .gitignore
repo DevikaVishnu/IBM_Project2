@@ -37,6 +37,8 @@ __pycache__/
 # Local Claude Code settings and unpublished pilot packages
 .claude/
 docs/experiments/stage3-pilot-*.zip
+# Agent-council (Kevin's) private traces stay local; converted bundles go to /local/agent-council/bundles/.
+data/agent-council/
 # Belief Explorer: built bundles and hand annotations stay local-only.
 src/explorer/data/
 src/explorer/annotations/
