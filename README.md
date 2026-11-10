@@ -64,6 +64,12 @@ The trace data is local-only and not in git: raw traces contain complete model i
 
 A capability-by-capability table is in [`docs/STATUS.md`](docs/STATUS.md). The current research question and next step are in [`docs/research/STATE.md`](docs/research/STATE.md), and the dated history is in [`docs/research/RESEARCH_LOG.md`](docs/research/RESEARCH_LOG.md).
 
+## Multi-agent trace examples (local)
+
+- We turn IDA agent-run records into a simple timeline: who said what, which evidence they named, and how the run ended.
+- The local Explorer shows two reviewed examples: one where agents agree and the run finishes automatically, and one where agents disagree and the run asks for human review.
+- The Explorer checks recorded verification and final decisions. It does not guess whether sensor data proves a diagnosis.
+
 ## Related repositories
 
 - **[AssetOpsBench fork, branch `research/agenttrace-specialists`](https://github.com/DevikaVishnu/AssetOpsBench/tree/research/agenttrace-specialists):** DeepAgents instrumentation, structural adapter (`_semantic_adapter.py`), verifier (`_semantic_verify.py`), comparisons (`_semantic_compare.py`), fixtures and tests. It is a research branch of [IBM/AssetOpsBench](https://github.com/IBM/AssetOpsBench) and is not merged upstream.

@@ -22,6 +22,8 @@ data/assetopsbench/runs/
 # AssetOpsBench run traces and their per-run outputs (events, beliefs, analysis) also stay local;
 # the scripts in tests/ regenerate the outputs from a local trace.
 runs/assetopsbench/
+# Project 2 multi-agent IDA trace exports and hand annotations are local evidence.
+runs/multiagent/
 # Executed, unredacted copies of published experiment files.
 /local/
 .claude/settings.local.json
