@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { Chip, Empty, Excerpt, OriginTag, Section, card, eyebrow, fmt, linkBtn, mono, v } from "./theme.jsx";
+import { AssessmentNote, FindingCard, FindingsSummary, findingsOf, isFinding } from "./FindingsPanel.jsx";
+import { PlainSummary } from "./PlainView.jsx";
+import { Chip, Empty, Excerpt, OriginTag, Section, agentClaims, card, eyebrow, fmt, linkBtn, mono, v } from "./theme.jsx";
 
-const KIND_LABEL = { model_call: "model call", tool_call: "tool call", framework_eviction: "framework eviction", check: "check (no LLM call)",
+const KIND_LABEL = { model_call: "model call", tool_call: "tool call", framework_eviction: "framework eviction", check: "check (no LLM call)", deterministic_execution: "code execution (no model call)",
   framework_event: "framework record", config: "configuration", test_output: "test output (no LLM call)" };
 const agentName = id => (id === "$unresolved" ? "unresolved" : id === "$not_reconstructed" ? "not reconstructed" : String(id ?? "").replace(/^agent:|^role:/, ""));
 
@@ -36,7 +38,7 @@ export function SkeletonPanel({ b, onShowColumn }) {
           <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6 }}>
             <div style={{ ...eyebrow, marginBottom: 4 }}>Handoffs</div>
             {sk.handoffs.map(h => (
-              <div key={`${h.from}-${h.to}`} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" }}>
+              <div key={`${h.from}-${h.to}-${h.item ?? ""}`} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline" }}>
                 <b>{evName(h.from)}</b> → <b>{evName(h.to)}</b>
                 <span style={{ color: v("muted") }}>· {h.item && b.evidence[h.item]?.label ? `${b.evidence[h.item].label} delivered` : h.via}{h.via.includes("(") ? ` ${h.via.slice(h.via.indexOf("("))}` : ""}</span>
                 <OriginTag origin={h.origin} />
@@ -99,11 +101,21 @@ export function SkeletonPanel({ b, onShowColumn }) {
   );
 }
 
-export function FlagsPanel({ b, selected, onSelect, onShowInMatrix }) {
-  if (!b.layers.flags || !b.flags.length) return <Empty testid="flags-empty">No flags are annotated for this trace.</Empty>;
+export function FlagsPanel({ b, guide, selected, onSelect, onShowInMatrix, nav }) {
+  const fs = findingsOf(b);
+  const others = b.flags.filter(f => !isFinding(f));
+  // With no explicit selection, the first finding is expanded so the panel opens on evidence, not a list of titles.
+  // With guide copy a selection only highlights its card (technical evidence opens on request), so nothing is preselected.
+  const open = guide ? selected : selected === undefined || (selected === null && fs.length) ? fs[0]?.id : selected;
+  if (!b.layers.flags || !b.flags.length) {
+    return b.assessment ? <div data-testid="flags" style={{ display: "grid", gap: 12 }}><AssessmentNote a={b.assessment} /></div>
+      : <Empty testid="flags-empty">No flags are annotated for this trace.</Empty>;
+  }
   return (
     <div data-testid="flags" style={{ display: "grid", gap: 12 }}>
-      {b.flags.map(f => {
+      <AssessmentNote a={b.assessment} plain={guide?.assessment} />
+      {fs.map(f => <FindingCard key={f.id} b={b} f={f} guide={guide} active={f.id === open} onSelect={id => onSelect(id ?? false)} nav={nav} />)}
+      {others.map(f => {
         const active = f.id === selected;
         return (
           <article key={f.id} data-testid={`flag-${f.id}`} aria-label={f.title} onClick={() => onSelect(f.id)}
@@ -154,17 +166,20 @@ function useTileCols() {
   return cols;
 }
 
-export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
+export function Overview({ b, guide, onTab, onOpenClaim, onOpenFlag }) {
   const tileCols = useTileCols();
   const sk = b.skeleton ?? {};
   const mx = b.matrix;
   const c = sk.counts ?? {};
+  // Agent claims only: framework-authored claims carry no belief state and are not compared.
+  const ac = agentClaims(b);
+  const nFw = b.claims.length - ac.length;
   const results = {};
-  for (const cl of b.claims) {
+  for (const cl of ac) {
     const r = cl.o3?.status === "computed" ? cl.o3.comparison : cl.o3?.status ?? "none";
     results[r] = (results[r] ?? 0) + 1;
   }
-  const delivered = b.claims.flatMap(cl => cl.links.map(l => l.delivery?.value).filter(Boolean));
+  const delivered = ac.flatMap(cl => cl.links.map(l => l.delivery?.value).filter(Boolean));
   const agentRows = mx ? mx.rows.filter(r => r.kind !== "unresolved") : sk.agents ?? [];
   const tiles = [
     { label: b.trace.framework?.startsWith("ChatDev") ? "Roles" : "Agents", value: agentRows.length, origin: sk.origin ?? "observed", note: agentRows.map(r => r.label).join(", ") },
@@ -172,11 +187,15 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
       note: c.reconstructed_llm_calls != null ? `${c.reconstructed_llm_calls} reconstructed in §14` : c.unresolved_origin_events ? `${c.unresolved_origin_events} with unresolved origin` : null },
     { label: "Events", value: c.events ?? sk.events?.length, origin: sk.counts_origin ?? "computed", note: c.tool_events != null ? `${fmt(c.tool_events)} tool · ${fmt(c.eviction_events)} eviction` : null },
     { label: "Evidence items", value: c.evidence, origin: sk.counts_origin ?? "computed", note: c.entities != null ? `${c.entities} entities` : null },
-    { label: "Deliveries", value: c.delivers, origin: sk.counts_origin ?? "computed", note: mx?.origin === "computed" ? "structural, byte-identical" : "from §14" },
-    { label: "Claims", value: b.claims.length, origin: "hand-annotated", note: b.non_claims.length ? `+${b.non_claims.length} shown, not claims` : null },
-    { label: "O3 computed", value: b.claims.filter(cl => cl.o3?.status === "computed").length, origin: "computed", note: `of ${b.claims.length} claims` },
-    { label: "Flags", value: b.flags.length, origin: b.flags[0]?.origin ?? "hand-annotated" },
+    { label: "Deliveries", value: c.delivers, origin: sk.counts_origin ?? "computed", note: mx?.source_contract === "agenttrace-matrix/0.2" ? "structural, byte-identical" : mx?.origin === "computed" ? "in rendered inputs; whole or prefix" : "from §14" },
+    { label: "Claims", value: ac.length, origin: "hand-annotated", note: [nFw && `+${nFw} framework-authored, no state`, b.non_claims.length && `+${b.non_claims.length} shown, not claims`].filter(Boolean).join(" · ") || null },
+    { label: "O3 computed", value: ac.filter(cl => cl.o3?.status === "computed").length, origin: "computed", note: `of ${ac.length} ${nFw ? "agent " : ""}claims` },
+    b.assessment
+      ? { label: "Findings", value: b.assessment.status === "not_assessed" ? "Not assessed" : findingsOf(b).length, origin: b.assessment.origin,
+          note: b.assessment.status === "not_assessed" ? "no divergence is not implied" : "hand-validated, not detected" }
+      : { label: "Flags", value: b.flags.length, origin: b.flags[0]?.origin ?? "hand-annotated" },
   ];
+  const otherFlags = b.flags.filter(f => !isFinding(f));
   const facts = b.facts.filter(f => !f.id.startsWith("lane:") && !f.handoff);
   const handoff = b.facts.find(f => f.handoff);
   return (
@@ -187,11 +206,14 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
           <button style={{ ...linkBtn, color: "#B91C1C" }} onClick={() => onOpenFlag(f.id)}>Open flag</button>
         </div>
       ))}
+      <PlainSummary b={b} guide={guide} onOpenFinding={id => onOpenFlag(id)} />
+      <FindingsSummary b={b} guide={guide} onOpenFinding={id => onOpenFlag(id)} />
+      <Technical on={!!guide?.overview}>
       <div data-testid="tiles" style={{ display: "grid", gridTemplateColumns: `repeat(${tileCols}, minmax(0, 1fr))`, gap: 10 }}>
         {tiles.map(t => (
           <div key={t.label} data-testid={`tile-${t.label}`} style={{ ...card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}><span style={eyebrow}>{t.label}</span></div>
-            <span style={{ fontSize: 26, fontWeight: 700, color: v("ink"), fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{t.value == null ? "—" : fmt(t.value)}</span>
+            <span style={{ fontSize: typeof t.value === "string" ? 17 : 26, fontWeight: 700, color: v("ink"), fontVariantNumeric: "tabular-nums", lineHeight: 1.1, minHeight: 29, display: "flex", alignItems: "flex-end" }}>{t.value == null ? "—" : fmt(t.value)}</span>
             {t.note && <span style={{ fontSize: 12, color: v("muted"), lineHeight: 1.4 }}>{t.note}</span>}
             <OriginTag origin={t.origin} style={{ alignSelf: "flex-start", marginTop: 2 }} />
           </div>
@@ -202,9 +224,9 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
           right={b.claims.length > 0 && <button style={linkBtn} onClick={() => onTab("claims")}>Open claims</button>}>
           {!b.claims.length ? <p style={{ margin: 0, fontSize: 13, color: v("muted") }}>Not annotated.</p> : (
             <>
-              <ResultBar results={results} total={b.claims.length} />
+              <ResultBar results={results} total={ac.length} />
               <ul style={{ listStyle: "none", margin: "10px 0 0", padding: 0, display: "grid", gap: 2 }}>
-                {b.claims.map(cl => (
+                {ac.map(cl => (
                   <li key={cl.id}>
                     <button className="be-hover" onClick={() => onOpenClaim(cl.id)} style={{ width: "100%", display: "flex", gap: 8, alignItems: "center", textAlign: "left", background: "none", border: "none", borderRadius: 6, padding: "5px 6px", cursor: "pointer", fontSize: 13, color: v("ink") }}>
                       <span style={{ flex: 1 }}>{cl.label}</span><ResultBadge cl={cl} />
@@ -214,20 +236,21 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
               </ul>
               <p style={{ margin: "8px 0 0", fontSize: 12, color: v("muted") }}>
                 Claims and links are hand-annotated (illustrative, not gold). Delivery to the claiming call: {countBy(delivered)}.
+                {nFw > 0 && <> {nFw} framework-authored claim{nFw > 1 ? "s" : ""} (code-built messages) {nFw > 1 ? "are" : "is"} listed under Claims with no state and {nFw > 1 ? "are" : "is"} not compared.</>}
               </p>
             </>
           )}
         </Section>
-        <Section title="Flags" origin={b.flags.length ? b.flags[0].origin : undefined} testid="overview-flags" right={b.flags.length > 0 && <button style={linkBtn} onClick={() => onTab("flags")}>Open flags</button>}>
-          {!b.flags.length ? <p style={{ margin: 0, fontSize: 13, color: v("muted") }}>None annotated.</p> : (
+        {!(b.assessment && !otherFlags.length) && <Section title="Flags" origin={otherFlags.length ? otherFlags[0].origin : undefined} testid="overview-flags" right={otherFlags.length > 0 && <button style={linkBtn} onClick={() => onTab("flags")}>Open flags</button>}>
+          {!otherFlags.length ? <p style={{ margin: 0, fontSize: 13, color: v("muted") }}>None annotated.</p> : (
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 2 }}>
-              {b.flags.map(f => (
+              {otherFlags.map(f => (
                 <li key={f.id}><button className="be-hover" onClick={() => onOpenFlag(f.id)} style={{ width: "100%", display: "flex", gap: 8, textAlign: "left", background: "none", border: "none", borderRadius: 6, padding: "5px 6px", cursor: "pointer", fontSize: 13, color: v("ink") }}>
                   <b style={{ color: "#B91C1C" }} aria-hidden="true">⚑</b><span>{f.title}</span></button></li>
               ))}
             </ul>
           )}
-        </Section>
+        </Section>}
         {handoff && (
           <Section title={handoff.title} origin="hand-annotated" testid="overview-handoff">
             <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.5 }}>
@@ -263,7 +286,20 @@ export function Overview({ b, onTab, onOpenClaim, onOpenFlag }) {
           )}
         </Section>
       </div>
+      </Technical>
     </div>
+  );
+}
+
+// With a plain-language summary the run statistics, claims and facts move behind one disclosure; otherwise
+// they render exactly as before.
+function Technical({ on, children }) {
+  if (!on) return children;
+  return (
+    <details data-testid="overview-technical" style={{ ...card, padding: "10px 16px" }}>
+      <summary style={{ fontSize: 13, fontWeight: 650, cursor: "pointer", color: v("ink") }}>Technical overview <span style={{ fontWeight: 400, color: v("muted") }}>· run statistics, claims vs evidence, facts, layers</span></summary>
+      <div style={{ display: "grid", gap: 14, marginTop: 12 }}>{children}</div>
+    </details>
   );
 }
 

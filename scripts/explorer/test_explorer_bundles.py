@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -56,9 +57,22 @@ def test_manifest_sha_matches():
     if not man.exists():
         pytest.skip("no manifest")
     m = json.loads(man.read_text(encoding="utf-8"))
-    assert [b["trace_id"] for b in m["bundles"]] == TRACES
+    ids = [b["trace_id"] for b in m["bundles"]]
+    # The built-in traces come first, in order; further local bundles (e.g. agent-council runs) may follow.
+    assert ids[:len(TRACES)] == TRACES
+    assert len(ids) == len(set(ids)), "duplicate trace_id in the manifest"
     for b in m["bundles"]:
-        assert hashlib.sha256((DATA / b["file"]).read_bytes()).hexdigest() == b["sha256"]
+        # A bare file name inside src/explorer/data: no directories, no traversal, no other extension.
+        assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.bundle\.json", b["file"]), b["file"]
+        path = (DATA / b["file"]).resolve()
+        assert path.parent == DATA.resolve() and path.is_file(), b["file"]
+        body = path.read_bytes()
+        assert hashlib.sha256(body).hexdigest() == b["sha256"]
+        assert b["contract"] == "agenttrace-explorer-bundle/0.1"
+        bundle = json.loads(body)
+        assert bundle["trace"]["id"] == b["trace_id"] and bundle["contract"] == b["contract"]
+        if b["trace_id"] not in TRACES:  # the built-in ones are validated by test_bundle_validates
+            assert validate(bundle) == [], b["trace_id"]
 
 
 @pytest.mark.parametrize("tid", ["aob-621", "aob-sc3-B"])
@@ -169,6 +183,26 @@ def test_stripped_layers_still_valid(tid):
     b["matrix"] = None
     b["layers"]["matrix"] = False
     assert validate(b) == []
+
+
+@pytest.mark.parametrize("tid", TRACES)
+def test_optional_kinds_absent_from_existing_bundles(tid):
+    """C1/C5 are optional: the AssetOpsBench and Gomoku bundles carry no column kind and no state-less claim, and the
+    validator still accepts a code-execution kind only where the contract allows it."""
+    b = load(tid)
+    assert all("kind" not in c for c in b["matrix"]["columns"])
+    assert all(c.get("state") is not None for c in b["claims"])
+    assert "deterministic_execution" not in {e["kind"] for e in b["skeleton"]["events"]}
+    bad = copy.deepcopy(b)
+    bad["matrix"]["columns"][0]["kind"] = "deterministic_execution"  # a model-call column relabelled as code
+    assert any("deterministic execution" in p or "deterministic_execution" in p for p in validate(bad))
+    bad = copy.deepcopy(b)
+    bad["matrix"]["columns"][0]["kind"] = "something_else"
+    assert any("kind" in p for p in validate(bad))
+    if b["claims"]:
+        bad = copy.deepcopy(b)
+        bad["claims"][0]["state"] = None  # dropping an agent claim's state is not allowed
+        assert any("state" in p for p in validate(bad))
 
 
 def test_validator_rejects_violations():

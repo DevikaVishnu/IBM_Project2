@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ClaimsPanel from "./ClaimsPanel.jsx";
 import MatrixPanel from "./MatrixPanel.jsx";
+import PositionsPanel from "./PositionsPanel.jsx";
 import { FlagsPanel, Overview, SkeletonPanel } from "./SkeletonFlags.jsx";
 import WalkthroughPanel from "./WalkthroughPanel.jsx";
 import { Chip, ORIGIN, OriginTag, SCOPED_CSS, VARS, card, v } from "./theme.jsx";
@@ -12,14 +13,16 @@ import { Chip, ORIGIN, OriginTag, SCOPED_CSS, VARS, card, v } from "./theme.jsx"
 //   error          message for status "error"
 //   traces         [{trace_id, label, kind}] for the trace switcher (optional)
 //   traceId, onTraceChange
+//   guide          optional plain-language display copy for this bundle (CONTRACT.md, "Guide sidecar"), or null
 // React 18 compatible.  Drop-in for another app: one route rendering a host like ExplorerTab.jsx.
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "claims", label: "Claims & evidence" },
   { id: "matrix", label: "Interaction matrix" },
+  { id: "positions", label: "Computed positions", optional: b => !!b.positions },
   { id: "skeleton", label: "Skeleton" },
-  { id: "flags", label: "Flags" },
+  { id: "flags", label: "Flags", labelWith: b => (b.assessment ? "Findings & flags" : "Flags") },
   { id: "built", label: "How it's built" },
 ];
 
@@ -34,7 +37,7 @@ function useNarrow() {
   return narrow;
 }
 
-export default function BeliefExplorerPage({ bundle, status = bundle ? "ready" : "missing", error, traces = [], traceId, onTraceChange }) {
+export default function BeliefExplorerPage({ bundle, guide = null, status = bundle ? "ready" : "missing", error, traces = [], traceId, onTraceChange }) {
   const narrow = useNarrow();
   return (
     <div className="be-root" data-testid="belief-explorer" style={{ ...VARS, background: v("canvas"), color: v("ink"), fontFamily: v("font"), fontSize: 14, minHeight: "100%", lineHeight: 1.45 }}>
@@ -66,7 +69,7 @@ export default function BeliefExplorerPage({ bundle, status = bundle ? "ready" :
       {status === "missing" && <Notice testid="explorer-local-only">Explorer data is local-only. See docs/DATA.md.</Notice>}
       {status === "loading" && <Notice testid="explorer-loading">Loading trace bundle…</Notice>}
       {status === "error" && <Notice testid="explorer-error" tone="danger">Could not load this trace bundle: {error}</Notice>}
-      {status === "ready" && bundle && <TraceView key={bundle.trace.id} b={bundle} narrow={narrow} />}
+      {status === "ready" && bundle && <TraceView key={bundle.trace.id} b={bundle} guide={guide?.trace_id === bundle.trace.id ? guide : null} narrow={narrow} />}
     </div>
   );
 }
@@ -80,17 +83,48 @@ function Notice({ children, testid, tone }) {
   );
 }
 
-function TraceView({ b, narrow }) {
+function TraceView({ b, guide, narrow }) {
   const [tab, setTab] = useState("overview");
   const [claim, setClaim] = useState(b.claims[0]?.id ?? null);
   const [flag, setFlag] = useState(null);
+  const [posFocus, setPosFocus] = useState(null);
   // Open the matrix where the trace's story starts: the first handoff between agents, else the first claim marker.
   const firstMarker = b.matrix?.edges?.[0]?.from ?? b.matrix?.overlays?.find(o => o.kind === "claim")?.column ?? b.matrix?.overlays?.[0]?.column ?? b.matrix?.columns?.[0]?.id ?? null;
   const [col, setCol] = useState(firstMarker);
-  const openClaim = id => { setClaim(id); setTab("claims"); };
-  const openFlag = id => { setFlag(id); setTab("flags"); };
-  const claimInMatrix = c => { const o = b.matrix?.overlays?.find(x => x.ref === c.id); if (o) setCol(o.column); setTab("matrix"); };
-  const flagInMatrix = f => { setFlag(f.id); const o = b.matrix?.overlays?.find(x => x.ref === f.id); setCol(o?.column ?? f.events.find(e => b.matrix?.columns.some(c => c.id === e)) ?? col); setTab("matrix"); };
+  // Every view change brings the tab bar back into view (the window is the scroll container), and a navigation may
+  // name a target element (a finding card, a position chip) that is then scrolled into view.  Nothing else moves.
+  const tabsRef = useRef(null);
+  const target = useRef(null);
+  const [navSeq, setNavSeq] = useState(0);
+  const go = (next, selector = null) => { target.current = selector; setTab(next); setNavSeq(n => n + 1); };
+  useEffect(() => {
+    if (!navSeq) return;
+    const bar = tabsRef.current;
+    if (bar && bar.getBoundingClientRect().top < 0) bar.scrollIntoView({ block: "start" });
+    const sel = target.current;
+    target.current = null;
+    if (!sel) return;
+    const id = requestAnimationFrame(() => {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      // A tall target (an expanded finding card) is aligned to its top; a small one (a chip) is brought into view,
+      // centred horizontally inside its own scroller.
+      const tall = el.getBoundingClientRect().height > window.innerHeight * 0.6;
+      el.scrollIntoView({ block: tall ? "start" : "nearest", inline: "center" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [navSeq]);
+  const setTabNav = next => go(next);
+  const openClaim = id => { setClaim(id); go("claims"); };
+  const openFlag = id => { setFlag(id); go("flags", id ? `[data-testid="finding-${id}"], [data-testid="flag-${id}"]` : null); };
+  const claimInMatrix = c => { const o = b.matrix?.overlays?.find(x => x.ref === c.id); if (o) setCol(o.column); go("matrix"); };
+  // Finding navigation: every target is a view that already exists; nothing new is computed in the page.
+  const nav = {
+    claim: openClaim,
+    column: (f, id) => { setFlag(f.id); setCol(id); go("matrix"); },
+    position: id => { setPosFocus(id); go("positions", `[data-testid="pos-${id}"]`); },
+  };
+  const flagInMatrix = f => { setFlag(f.id); const o = b.matrix?.overlays?.find(x => x.ref === f.id); setCol(o?.column ?? f.events.find(e => b.matrix?.columns.some(c => c.id === e)) ?? col); go("matrix"); };
   const t = b.trace;
   const runFlag = b.flags.find(f => f.kind === "run_status");
   return (
@@ -105,22 +139,23 @@ function TraceView({ b, narrow }) {
           <Chip tone="warning">Annotations: {b.honesty.annotations}</Chip>
         </span>
       </div>
-      <nav role="tablist" aria-label="Views" style={{ display: "flex", flexWrap: "wrap", gap: 2, padding: "10px 24px 0", borderBottom: `1px solid ${v("line")}` }}>
-        {TABS.map(x => {
+      <nav ref={tabsRef} role="tablist" aria-label="Views" style={{ display: "flex", flexWrap: "wrap", gap: 2, padding: "10px 24px 0", borderBottom: `1px solid ${v("line")}` }}>
+        {TABS.filter(x => !x.optional || x.optional(b)).map(x => {
           const on = tab === x.id;
           return (
-            <button key={x.id} role="tab" aria-selected={on} data-testid={`tab-${x.id}`} onClick={() => setTab(x.id)}
+            <button key={x.id} role="tab" aria-selected={on} data-testid={`tab-${x.id}`} onClick={() => setTabNav(x.id)}
               style={{ border: "none", background: "none", padding: "8px 14px", fontSize: 13.5, fontWeight: on ? 700 : 550, cursor: "pointer", color: on ? "#1D4ED8" : v("muted"),
-                boxShadow: on ? "inset 0 -2px 0 #2563EB" : "none" }}>{x.label}</button>
+                boxShadow: on ? "inset 0 -2px 0 #2563EB" : "none" }}>{x.labelWith ? x.labelWith(b) : x.label}</button>
           );
         })}
       </nav>
       <main role="tabpanel" aria-label={TABS.find(x => x.id === tab)?.label} style={{ padding: "16px 24px 28px" }}>
-        {tab === "overview" && <Overview b={b} onTab={setTab} onOpenClaim={openClaim} onOpenFlag={openFlag} />}
+        {tab === "overview" && <Overview b={b} guide={guide} onTab={setTabNav} onOpenClaim={openClaim} onOpenFlag={openFlag} />}
         {tab === "claims" && <ClaimsPanel b={b} selected={claim} onSelect={setClaim} onShowInMatrix={claimInMatrix} narrow={narrow} />}
         {tab === "matrix" && <MatrixPanel b={b} selectedCol={col} onSelectCol={setCol} highlightFlag={flag} onOpenClaim={openClaim} onOpenFlag={openFlag} narrow={narrow} />}
-        {tab === "skeleton" && <SkeletonPanel b={b} onShowColumn={id => { setCol(id); setTab("matrix"); }} />}
-        {tab === "flags" && <FlagsPanel b={b} selected={flag} onSelect={setFlag} onShowInMatrix={flagInMatrix} />}
+        {tab === "positions" && b.positions && <PositionsPanel b={b} narrow={narrow} focus={posFocus} onShowInMatrix={id => { setCol(id); go("matrix"); }} />}
+        {tab === "skeleton" && <SkeletonPanel b={b} onShowColumn={id => { setCol(id); go("matrix"); }} />}
+        {tab === "flags" && <FlagsPanel b={b} guide={guide} selected={flag} onSelect={setFlag} onShowInMatrix={flagInMatrix} nav={nav} />}
         {tab === "built" && <WalkthroughPanel b={b} onOpenClaim={openClaim} onShowInMatrix={claimInMatrix} />}
         <details style={{ marginTop: 18 }} data-testid="provenance">
           <summary style={{ fontSize: 13, color: v("muted"), cursor: "pointer" }}>Provenance and display rules</summary>

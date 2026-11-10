@@ -82,6 +82,11 @@ export function Chip({ tone = "muted", children, title, style }) {
 }
 
 // The single O3 outcome shown for a claim: the computed comparison if there is one, else the status.
+// A framework-authored claim (bundle field `author.kind` deterministic_execution) has no belief state (`state: null`, with
+// `state_absent.reason`).  It is shown, but never counted as an agent claim or belief state, and it is never an O3 input.
+export const isFrameworkClaim = c => c?.state == null && c?.author?.kind === "deterministic_execution";
+export const agentClaims = b => b.claims.filter(c => !isFrameworkClaim(c));
+
 export function claimResult(c) {
   const o = c.o3;
   if (!o) return "none";

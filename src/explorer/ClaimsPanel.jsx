@@ -1,4 +1,4 @@
-import { Chip, DELIVERY, Empty, Excerpt, OriginTag, ResultChip, card, claimResult, eyebrow, linkBtn, mono, v } from "./theme.jsx";
+import { Chip, DELIVERY, Empty, Excerpt, OriginTag, ResultChip, agentClaims, card, claimResult, eyebrow, isFrameworkClaim, linkBtn, mono, v } from "./theme.jsx";
 
 // Claims & evidence: a claim list and, for the selected claim, its chain
 //   exact words → proposition → state → evidence → delivered to the claiming call? → O3 result.
@@ -29,7 +29,9 @@ const p = { margin: "0 0 6px", fontSize: 13, lineHeight: 1.55, color: v("ink") }
 function Chain({ b, c, onShowInMatrix }) {
   const prop = b.propositions.find(x => x.id === c.proposition);
   const o3 = c.o3 ?? {};
-  const where = c.step != null ? `model call ${c.event.replace(/^ev:llm:/, "")}, output at step ${c.step}` : `${c.event.replace(/^gk:/, "")}, log line ${c.line}`;
+  const fw = isFrameworkClaim(c);
+  const where = fw ? `code execution ${c.author.execution} (no model call), message posted at step ${c.step}`
+    : c.step != null ? `model call ${c.event.replace(/^ev:llm:/, "")}, output at step ${c.step}` : `${c.event.replace(/^gk:/, "")}, log line ${c.line}`;
   return (
     <div data-testid="claim-chain" style={{ ...card, padding: "16px 18px" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
@@ -44,15 +46,15 @@ function Chain({ b, c, onShowInMatrix }) {
         <Step n={1} title="Exact words" origin={c.origin} testid="chain-words">
           <blockquote style={{ margin: 0, padding: "8px 12px", borderLeft: "3px solid #F59E0B", background: "#FFFBEB", borderRadius: 6, ...mono, fontSize: 13, lineHeight: 1.55, color: v("ink"), whiteSpace: "pre-wrap" }}>{c.words}</blockquote>
           <p style={{ ...p, marginTop: 6, color: v("muted") }}>
-            {where} · speaker <b style={{ color: v("ink") }}>{agentName(c.speaker)}</b> <OriginTag origin={c.speaker_origin} style={{ marginLeft: 4 }} />
+            {where} · speaker <b style={{ color: v("ink") }}>{agentName(c.speaker)}</b>{fw ? <> under the role <b style={{ color: v("ink") }}>{agentName(c.author.assigned_agent)}</b></> : null} <OriginTag origin={c.speaker_origin} style={{ marginLeft: 4 }} />
           </p>
         </Step>
         <Step n={2} title="Proposition" origin={prop?.origin} testid="chain-proposition">
           <p style={p}>{prop?.form ?? <i>Not annotated</i>}</p>
         </Step>
-        <Step n={3} title="State the claim expresses" origin={c.state?.origin} testid="chain-state">
-          <p style={p}><Chip tone={c.state?.value === "TRUE" ? "primary" : c.state?.value === "FALSE" ? "danger" : "warning"}>{c.state?.value ?? "Not annotated"}</Chip>
-            {c.state?.value === "UNCERTAIN" && <span style={{ color: v("muted"), marginLeft: 8 }}>hedged by the speaker</span>}</p>
+        <Step n={3} title="State the claim expresses" origin={fw ? c.state_absent.origin : c.state?.origin} testid="chain-state">
+          {fw ? <p style={p} data-testid="no-state"><Chip tone="muted">No state</Chip> <span style={{ marginLeft: 6 }}>Framework-authored: not an agent belief state, not counted as one, and not compared (O3). {c.state_absent.reason}</span></p> : <p style={p}><Chip tone={c.state?.value === "TRUE" ? "primary" : c.state?.value === "FALSE" ? "danger" : "warning"}>{c.state?.value ?? "Not annotated"}</Chip>
+            {c.state?.value === "UNCERTAIN" && <span style={{ color: v("muted"), marginLeft: 8 }}>hedged by the speaker</span>}</p>}
         </Step>
         <Step n={4} title="Evidence" origin={c.links.length ? "hand-annotated" : undefined} testid="chain-evidence">
           {!c.links.length && <p style={{ ...p, color: v("muted") }}>No direct evidence is annotated for this claim.</p>}
@@ -110,6 +112,7 @@ function Chain({ b, c, onShowInMatrix }) {
                 direct {o3.direct} · delivered direct {o3.delivered_direct} · testimonial {o3.testimonial} · {o3.operation}, computed from {o3.computed_from}
                 {o3.fixture_expected && <> · matches the fixture's expected result ({o3.fixture_expected})</>}
               </p>
+              {o3.delivered_direct_note && <p data-testid="o3-delivered-note" style={{ ...p, fontSize: 12, color: v("muted") }}>Delivered direct: {o3.delivered_direct_note}</p>}
             </>
           )}
           {o3.status === "rule-dependent" && <p style={p}><ResultChip value="rule-dependent" /> <span style={{ marginLeft: 6 }}>{o3.reason}</span></p>}
@@ -146,7 +149,7 @@ export default function ClaimsPanel({ b, selected, onSelect, onShowInMatrix, nar
     <div style={{ display: "grid", gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(260px, 340px) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <nav aria-label="Claims" style={{ ...card, padding: 6 }}>
-          <div style={{ ...eyebrow, padding: "8px 10px 4px", display: "flex", alignItems: "center", gap: 8 }}>Claims ({b.claims.length}) <OriginTag origin="hand-annotated" /></div>
+          <div style={{ ...eyebrow, padding: "8px 10px 4px", display: "flex", alignItems: "center", gap: 8 }}>Claims ({agentClaims(b).length}{b.claims.length > agentClaims(b).length ? ` + ${b.claims.length - agentClaims(b).length} framework` : ""}) <OriginTag origin="hand-annotated" /></div>
           <ul data-testid="claim-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {b.claims.map(x => {
               const active = x.id === c.id;
@@ -156,7 +159,7 @@ export default function ClaimsPanel({ b, selected, onSelect, onShowInMatrix, nar
                     style={{ width: "100%", textAlign: "left", border: "none", borderRadius: 7, cursor: "pointer", padding: "9px 10px", display: "flex", gap: 8, alignItems: "center",
                       background: active ? v("primary-soft") : "transparent", boxShadow: active ? "inset 3px 0 0 #2563EB" : "none", color: v("ink") }}>
                     <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: active ? 650 : 500, lineHeight: 1.4 }}>{x.label}
-                      <span style={{ display: "block", fontSize: 12, color: v("muted"), fontWeight: 400 }}>{x.step != null ? `step ${x.step}` : `L${x.line}`} · {agentName(x.speaker)} · state {x.state?.value}</span>
+                      <span style={{ display: "block", fontSize: 12, color: v("muted"), fontWeight: 400 }}>{x.step != null ? `step ${x.step}` : `L${x.line}`} · {isFrameworkClaim(x) ? `framework under ${agentName(x.author.assigned_agent)} · no state` : `${agentName(x.speaker)} · state ${x.state?.value}`}</span>
                     </span>
                     <ResultChip value={claimResult(x)} />
                   </button>

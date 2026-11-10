@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import BeliefExplorerPage from "./BeliefExplorerPage.jsx";
-import { loadBundle, manifest, traces } from "./loadBundles.js";
+import { loadBundle, loadGuide, manifest, traces } from "./loadBundles.js";
 
 // AP host for the Belief Explorer: owns trace selection and loading, passes the bundle to the page.
 // The selected trace is kept in the URL query (?trace=<id>) so a reload reopens it.
@@ -11,12 +11,13 @@ const initial = () => {
 
 export default function ExplorerTab() {
   const [traceId, setTraceId] = useState(initial);
-  const [state, setState] = useState({ id: null, bundle: null, error: null });
+  const [state, setState] = useState({ id: null, bundle: null, guide: null, error: null });
   useEffect(() => {
     if (!traceId) return undefined;
     let alive = true;
-    loadBundle(traceId).then(b => alive && setState({ id: traceId, bundle: b, error: null }))
-      .catch(e => alive && setState({ id: traceId, bundle: null, error: String(e.message ?? e) }));
+    Promise.all([loadBundle(traceId), loadGuide(traceId).catch(() => null)])
+      .then(([b, g]) => alive && setState({ id: traceId, bundle: b, guide: g, error: null }))
+      .catch(e => alive && setState({ id: traceId, bundle: null, guide: null, error: String(e.message ?? e) }));
     return () => { alive = false; };
   }, [traceId]);
   const choose = id => {
@@ -26,5 +27,5 @@ export default function ExplorerTab() {
     window.history.replaceState(null, "", u);
   };
   const status = !manifest || !traces.length ? "missing" : state.id !== traceId ? "loading" : state.error ? "error" : "ready";
-  return <BeliefExplorerPage bundle={status === "ready" ? state.bundle : null} status={status} error={state.error} traces={traces} traceId={traceId} onTraceChange={choose} />;
+  return <BeliefExplorerPage bundle={status === "ready" ? state.bundle : null} guide={status === "ready" ? state.guide : null} status={status} error={state.error} traces={traces} traceId={traceId} onTraceChange={choose} />;
 }

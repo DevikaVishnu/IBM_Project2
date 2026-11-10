@@ -31,6 +31,9 @@ const fmt = n => n.toLocaleString("en-US");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const plural = (n, one, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`;
 const CELL = { fill: "#d6e3fa", stroke: "#7f9fd9", glyph: "#1e3a8a" };
+// Optional column kind (Explorer bundles): a deterministic code execution, not a model call.  Absent on matrix/0.2 runs.
+export const CODE_CELL = { fill: "#eef1f5", stroke: "#475569", glyph: "#334155" };
+export const isCode = c => c?.kind === "deterministic_execution";
 const LABEL_W = 192;
 const MIN_COL = 28;
 const MAX_COL = 36;
@@ -45,8 +48,14 @@ export function derive(m) {
   const rows = [...m.rows.map(r => ({ id: r.id, name: r.agent_id, sub: [r.kind, r.name].filter(Boolean).join(" · "), agent: true })),
     ...(hasUnresolved ? [{ id: "$unresolved", name: "unresolved", sub: "origin not attributed", agent: false }] : [])];
   const rowName = id => (id === "$unresolved" ? "unresolved origin" : id.replace(/^agent:/, ""));
+  // Model calls and code executions are numbered separately, so a code column never counts as a model call.
   const callIndex = {};
-  for (const r of rows) cols.filter(c => c.row === r.id).forEach((c, i, arr) => { callIndex[c.id] = [i + 1, arr.length]; });
+  for (const r of rows) {
+    cols.filter(c => c.row === r.id && !isCode(c)).forEach((c, i, arr) => { callIndex[c.id] = [i + 1, arr.length]; });
+    cols.filter(c => c.row === r.id && isCode(c)).forEach((c, i, arr) => { callIndex[c.id] = [i + 1, arr.length]; });
+  }
+  const modelCalls = cols.filter(c => !isCode(c));
+  const codeCols = cols.length - modelCalls.length;
   const amb = Object.fromEntries(m.ambiguities.map(a => [a.field_path.match(/events\[(.+?)\]/)?.[1], a]));
   // Delegation edges: an item produced by one model call that first appears in another agent's input through the delegation_id join.
   const edges = [];
@@ -63,12 +72,13 @@ export function derive(m) {
   const maxIn = Math.max(0, ...cols.map(c => c.delivers.length));
   const key = [
     ...cols.filter(c => c.issued_delegations.length).map(c => ({ col: c, label: `Delegation by ${rowName(c.row)}` })),
-    ...edges.map(e => ({ col: colById[e.to], label: `${rowName(colById[e.to].row)} receives task` })),
+    ...edges.map(e => ({ col: colById[e.to], label: `${rowName(colById[e.to].row)} ${m.edge_receive_label ?? "receives task"}` })),
     ...cols.filter(c => c.row === "$unresolved").slice(0, 3).map(c => ({ col: c, label: "Unresolved origin" })),
     ...fixtureCols.filter(c => !received.has(c.id)).slice(0, 4).map(c => ({ col: c, label: "Fixture link" })),
-    ...(cols.length ? [{ col: cols[cols.length - 1], label: "Last call" }] : []),
+    ...(modelCalls.length ? [{ col: modelCalls[modelCalls.length - 1], label: "Last call" }] : []),
   ].filter((k, i, all) => all.findIndex(x => x.col.id === k.col.id) === i);
-  return { cols, colById, rows, rowName, callIndex, amb, edges, received, fixtureCols, overlapCols, maxIn, key, hasUnresolved };
+  // edge_glyph is optional (Explorer delivery grids); matrix/0.2 runs keep "D" for a received delegation.
+  return { cols, colById, rows, rowName, callIndex, amb, edges, received, fixtureCols, overlapCols, maxIn, key, hasUnresolved, edgeGlyph: m.edge_glyph ?? "D", codeCols };
 }
 
 function findings(m, d) {
@@ -97,9 +107,10 @@ function findings(m, d) {
 }
 
 function glyphOf(c, d) {
+  if (isCode(c)) return "⚙";
   if (c.row === "$unresolved") return "?";
   if (c.issued_delegations.length) return "⇢";
-  if (d.received.has(c.id)) return "D";
+  if (d.received.has(c.id)) return d.edgeGlyph;
   if (c.fixture_links.length) return "◆";
   if (c.overlaps_with.length) return "∥";
   return "";
@@ -111,8 +122,15 @@ function describe(d, colId, rowId) {
   const row = d.rowName(rowId);
   if (c.row !== rowId) return `${row} at seq ${c.order}: no observation. Nothing is carried forward.`;
   const [i, n] = d.callIndex[c.id] ?? [];
-  const kind = c.row === "$unresolved" ? "model call with unresolved agent origin" : `model call ${i} of ${n}, no semantic claim extracted`;
-  return `${row}, seq ${c.order}: ${kind}. ${c.row === "$unresolved" ? "" : `${c.delivers.length} items in its rendered input.`}`;
+  if (isCode(c)) {
+    const sem = c.claims ? `, ${c.claims} hand-annotated framework claim${c.claims > 1 ? "s" : ""} (no state)` : "";
+    return `${row}, seq ${c.order}: code execution ${i} of ${n} (no model call${sem}). No model input; it posted ${c.posted ?? "recorded"} message${c.posted === 1 ? "" : "s"}.`;
+  }
+  // `claims` and `input_unknown` are optional column fields (set by the Explorer); without them the text is unchanged.
+  const sem = c.claims == null ? "no semantic claim extracted" : c.claims ? `${c.claims} hand-annotated claim${c.claims > 1 ? "s" : ""}` : "no annotated claim";
+  const kind = c.row === "$unresolved" ? "model call with unresolved agent origin" : `model call ${i} of ${n}, ${sem}`;
+  const input = c.input_unknown ? "rendered input not recorded for this call (delivery unknown)." : `${c.delivers.length} items in its rendered input.`;
+  return `${row}, seq ${c.order}: ${kind}. ${c.row === "$unresolved" ? "" : input}`;
 }
 
 function useSize(ref) {
@@ -187,19 +205,20 @@ export function Matrix({ m, d, sel, onSelect, onActivate, layout, minCol = MIN_C
   return (
     <div ref={outer} style={{ flex: layout.fixed ? 1 : "none", minHeight: 0, overflowY: layout.fixed ? "auto" : "visible", overflowX: "hidden" }}>
       <div data-testid="matrix-grid" role="grid" tabIndex={0} onKeyDown={onKey} aria-describedby="matrix-help matrix-live"
-        aria-label={`Agent by model-call matrix, ${d.rows.length} rows, ${n} model calls`} style={{ display: "flex" }}>
+        aria-label={`Agent by model-call matrix, ${d.rows.length} rows, ${n - d.codeCols} model calls${d.codeCols ? `, ${d.codeCols} code executions` : ""}`} style={{ display: "flex" }}>
         <svg width={LABEL_W} height={height} style={{ flex: "none", display: "block", fontFamily: T.sans, background: T.panel, borderRight: `1px solid ${T.line}` }} aria-hidden="true">
           {d.rows.map((r, ri) => {
             const mid = laneY[ri] + lanes[ri] / 2;
             const big = lanes[ri] >= 44;
-            const count = d.cols.filter(c => c.row === r.id).length;
+            const count = d.cols.filter(c => c.row === r.id && !isCode(c)).length;
+            const code = d.cols.filter(c => c.row === r.id && isCode(c)).length;
             return (
               <g key={r.id}>
                 <title>{`${r.name} · ${r.sub}`}</title>
                 {ri === rowIdx && <rect x={0} y={laneY[ri]} width={4} height={lanes[ri]} fill={T.ink} />}
                 <text x={14} y={mid - (big ? 9 : 0)} fontFamily={T.mono} fontSize={14} fontWeight={700} fill={T.ink}>{short(r.name)}</text>
                 {big && <text x={14} y={mid + 7} fontSize={12} fill={T.faint}>{short(r.sub)}</text>}
-                <text x={14} y={mid + (big ? 23 : 15)} fontSize={12} fill={T.muted}>{plural(count, "call")}</text>
+                <text x={14} y={mid + (big ? 23 : 15)} fontSize={12} fill={T.muted}>{plural(count, "call")}{code ? ` · ${code} code` : ""}</text>
               </g>
             );
           })}
@@ -231,17 +250,18 @@ export function Matrix({ m, d, sel, onSelect, onActivate, layout, minCol = MIN_C
                 {d.cols.map((c, i) => {
                   const here = c.row === r.id;
                   const isSel = sel?.col === c.id && sel?.row === r.id;
-                  const kind = !here ? "empty" : r.id === "$unresolved" ? "unresolved" : "observed";
+                  const kind = !here ? "empty" : r.id === "$unresolved" ? "unresolved" : isCode(c) ? "code" : "observed";
                   const glyph = here ? glyphOf(c, d) : "";
                   return (
                     <g key={c.id} data-testid={`cell-${r.id}-${c.id}`} onClick={() => onSelect({ col: c.id, row: r.id })} style={{ cursor: "pointer" }}>
                       <title>{describe(d, c.id, r.id)}</title>
                       <rect x={x(i) + 2} y={laneY[ri] + 3} width={colW - 4} height={lanes[ri] - 6} rx={3}
-                        fill={kind === "empty" ? (isSel ? "#fff" : "transparent") : kind === "unresolved" ? "url(#hatch)" : CELL.fill}
-                        stroke={kind === "empty" ? (isSel ? T.focus : "none") : kind === "unresolved" ? "#6b7486" : CELL.stroke} strokeDasharray={kind === "empty" && isSel ? "4 3" : "none"} />
+                        fill={kind === "empty" ? (isSel ? "#fff" : "transparent") : kind === "unresolved" ? "url(#hatch)" : kind === "code" ? CODE_CELL.fill : CELL.fill}
+                        stroke={kind === "empty" ? (isSel ? T.focus : "none") : kind === "unresolved" ? "#6b7486" : kind === "code" ? CODE_CELL.stroke : CELL.stroke}
+                        strokeWidth={kind === "code" ? 1.5 : 1} strokeDasharray={kind === "empty" && isSel ? "4 3" : "none"} />
                       {isSel && <rect x={x(i) + 0.5} y={laneY[ri] + 1.5} width={colW - 1} height={lanes[ri] - 3} rx={4} fill="none" stroke={T.focus} strokeWidth={3} />}
                       {glyph && <text x={x(i) + colW / 2} y={laneY[ri] + lanes[ri] / 2 + 5} textAnchor="middle" fontSize={15} fontWeight={700}
-                        fill={glyph === "◆" ? LAYER.hand.color : kind === "unresolved" ? T.text : CELL.glyph}>{glyph}</text>}
+                        fill={glyph === "◆" ? LAYER.hand.color : kind === "unresolved" ? T.text : kind === "code" ? CODE_CELL.glyph : CELL.glyph}>{glyph}</text>}
                     </g>
                   );
                 })}
@@ -261,6 +281,9 @@ export function Matrix({ m, d, sel, onSelect, onActivate, layout, minCol = MIN_C
             <line x1={0} x2={width} y1={trackY + trackH} y2={trackY + trackH} stroke={T.line} />
             {telemetry ? d.cols.map((c, i) => {
               if (c.row === "$unresolved") return <text key={c.id} x={x(i) + colW / 2} y={trackY + trackH - 6} fontSize={11} fill={T.faint} textAnchor="middle">n/a</text>;
+              // A code execution has no model input: no bar, and not the "?" of an unrecorded input.
+              if (isCode(c)) return <text key={c.id} data-testid={`no-input-${c.id}`} x={x(i) + colW / 2} y={trackY + trackH - 6} fontSize={11} fill={T.faint} textAnchor="middle" onClick={() => onSelect({ col: c.id, row: c.row })} style={{ cursor: "pointer" }}><title>Code execution: no model input</title>code</text>;
+              if (c.input_unknown) return <text key={c.id} x={x(i) + colW / 2} y={trackY + trackH - 6} fontSize={13} fontWeight={700} fill={T.muted} textAnchor="middle" onClick={() => onSelect({ col: c.id, row: c.row })} style={{ cursor: "pointer" }}><title>Rendered input not recorded for this call: delivery unknown</title>?</text>;
               const tot = c.delivers.length, first = c.first_delivered_here.length;
               const scale = d.maxIn ? (trackH - 6) / d.maxIn : 0;
               return (
