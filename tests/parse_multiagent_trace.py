@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert one IDA agent trace into the shared simple event shape.
 
-The input format is ``ida.agenttrace/1.0``.  It records model executions,
+The input format is ``ida.agenttrace/1.0`` and ``ida.agenttrace/1.1``.  It records model executions,
 agent messages, observed inbox reads, and retrieval events.  The parser keeps
 only recorded values and never turns a missing value into a claim.
 
@@ -62,12 +62,12 @@ def _seq(value: object, fallback: int) -> tuple[int, int]:
 
 
 def parse_multiagent_trace(raw: dict, source_path: Path) -> list[dict]:
-    """Return observed events from one ``ida.agenttrace/1.0`` record.
+    """Return observed events from one ``ida.agenttrace`` record.
 
     ``rendered_input`` belongs to an execution rather than each individual
-    provider retry.  The raw record stores only a response excerpt per provider
-    call, so this parser exposes the recorded structured execution output and
-    does not pretend it has a full raw provider response.
+    provider retry. Version 1.1 adds a top-level ``llm_calls`` table with the
+    full recorded request and raw response, which is preserved as separate
+    events when present.
     """
     pending: list[tuple[tuple[int, int], dict]] = []
     serial = 0
@@ -118,6 +118,31 @@ def parse_multiagent_trace(raw: dict, source_path: Path) -> list[dict]:
                 target="user" if execution.get("kind") == "final" else "UNKNOWN",
                 source_trace=_source_trace(source_path, f"{base}/output"),
             )
+
+    for index, call in enumerate(raw.get("llm_calls", [])):
+        if not isinstance(call, dict):
+            continue
+        base = f"/llm_calls/{index}"
+        order = _seq(call.get("seq"), serial)
+        if call.get("request") is not None:
+            add(order, time=call.get("ts"), agent=call.get("agent_id"), action="model_request",
+                message={"execution_id": call.get("execution_id"), "call_index": call.get("call_index"),
+                         "request": call.get("request")}, target=call.get("agent_id"),
+                source_trace=_source_trace(source_path, f"{base}/request"))
+        if call.get("response_raw") is not None or call.get("error") is not None:
+            add(order, time=call.get("ts"), agent=call.get("agent_id"), action="model_response",
+                message={"execution_id": call.get("execution_id"), "call_index": call.get("call_index"),
+                         "response_raw": call.get("response_raw"), "error": call.get("error"),
+                         "ok": call.get("ok")}, target=call.get("agent_id"),
+                source_trace=_source_trace(source_path, f"{base}/response_raw"))
+
+    for index, change in enumerate(raw.get("score_changes", [])):
+        if not isinstance(change, dict):
+            continue
+        add(_seq(change.get("seq"), serial), time=change.get("ts"), agent=change.get("actor"),
+            action="score_changed", message={"operation": change.get("operation"), "before": change.get("before"),
+                                              "after": change.get("after"), "delta": change.get("delta")},
+            target="hypothesis_scores", source_trace=_source_trace(source_path, f"/score_changes/{index}"))
 
     for index, message in enumerate(raw.get("messages", [])):
         if not isinstance(message, dict):

@@ -23,18 +23,21 @@ class MultiAgentTraceParserTests(unittest.TestCase):
                 "seq": 3, "timestamp": "2026-11-02T09:59:00Z", "actor": "harness",
                 "event_type": "EVIDENCE_RETRIEVED", "evidence_ids": ["EV-001"], "payload": {"count": 1},
             }],
+            "llm_calls": [{"seq": 15, "ts": "2026-11-02T10:00:01Z", "agent_id": "diagnostic", "execution_id": "X-001", "call_index": 1, "request": {"prompt": "EV-001"}, "response_raw": "Bearing Wear", "ok": True}],
+            "score_changes": [{"seq": 16, "ts": "2026-11-02T10:00:01Z", "actor": "harness", "operation": "initial_scoring", "before": {}, "after": {"Bearing Wear": 0.7}, "delta": {"Bearing Wear": 0.7}}],
         }
 
         events = parse_multiagent_trace(raw, Path("multiagent.json"))
 
-        self.assertEqual([tuple(event) for event in events], [FIELDS] * 5)
+        self.assertEqual([tuple(event) for event in events], [FIELDS] * 8)
         self.assertEqual([event["action"] for event in events], [
-            "evidence_retrieved", "model_input", "model_output", "message_finding", "message_delivered",
+            "evidence_retrieved", "model_input", "model_request", "model_response", "score_changed", "model_output", "message_finding", "message_delivered",
         ])
-        self.assertEqual(events[3]["target"], "verification")
-        self.assertEqual(events[4]["target"], "verification")
+        self.assertEqual(events[6]["target"], "verification")
+        self.assertEqual(events[7]["target"], "verification")
         self.assertIn('"input": "EV-001"', events[1]["message"])
-        self.assertIn('"response_excerpt": "short only"', events[2]["message"])
+        self.assertIn('"response_raw": "Bearing Wear"', events[3]["message"])
+        self.assertIn('"Bearing Wear": 0.7', events[4]["message"])
         self.assertTrue(events[0]["source_trace"].endswith("#/events/0"))
 
 

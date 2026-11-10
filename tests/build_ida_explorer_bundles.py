@@ -162,13 +162,14 @@ def build(trace_id: str, label: str, raw_root: Path, draft_dir: Path) -> tuple[d
                        "builder": "tests/build_ida_explorer_bundles.py"},
         "layers": {"skeleton": True, "matrix": True, "claims": True, "evidence": True, "delivery": True, "o3": True, "flags": True},
         "skeleton": {"agents": [{"id": a, "label": agent_label(a, raw["agents"]), "sub": raw["agents"].get(a, {}).get("role"), "kind": "agent", "parent": None, "origin": "observed"} for a in sorted(agents)],
-                     "events": events, "handoffs": [], "counts": {"events": len(raw["events"]), "model_calls": sum(bool(e.get("llm_calls")) for e in raw["executions"]), "evidence": len(raw["evidence_flow"]), "delivers": sum(len(m.get("deliveries") or []) for m in raw["messages"])},
+                     "events": events, "handoffs": [], "counts": {"events": len(raw["events"]), "model_calls": len(raw.get("llm_calls") or []) or sum(bool(e.get("llm_calls")) for e in raw["executions"]), "evidence": len(raw["evidence_flow"]), "delivers": sum(len(m.get("deliveries") or []) for m in raw["messages"])},
                      "counts_origin": "computed", "skipped": [{"kind": "not shown in selected-story view", "steps": []}], "origin": "observed"},
-        "matrix": {"origin": "observed", "source_contract": "ida.agenttrace/1.0", "rows": [{"id": a, "label": agent_label(a, raw["agents"]), "sub": raw["agents"].get(a, {}).get("role"), "kind": "agent", "origin": "observed"} for a in sorted(agents)],
+        "matrix": {"origin": "observed", "source_contract": raw.get("schema_version", "ida.agenttrace"), "rows": [{"id": a, "label": agent_label(a, raw["agents"]), "sub": raw["agents"].get(a, {}).get("role"), "kind": "agent", "origin": "observed"} for a in sorted(agents)],
                    "columns": columns, "edges": [], "delivery_track": True, "max_delivers": 0, "overlays": overlays,
                    "note": "Selected story messages only; open Skeleton to see full recorded counts.", "order_caveat": "Message sequence is observation order, not proof of causation."},
         "evidence": evidence, "propositions": propositions, "claims": claims, "non_claims": [], "flags": flags,
         "facts": [{"id": "fact:decision", "title": "Recorded review decision", "text": draft["run"]["review_decision"], "origin": "observed"},
+                  {"id": "fact:schema", "title": "Trace format", "text": raw.get("schema_version", "UNKNOWN"), "origin": "observed"},
                   {"id": "fact:story", "title": "Selected story messages", "text": str(len(selected)), "origin": "computed"}],
         "checks": {"claim_quotes_checked": len(selected), "disagreements_recorded": len(draft["disagreements"])},
     }
@@ -182,7 +183,8 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=ROOT / "src/explorer/data", help="Explorer bundle output folder")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    specs = [("TR-20261102193128-1f44a781", "IDA trace · agreement"),
+    specs = [("TR-20261104152852-5d046205", "IDA 1.1 · full model calls"),
+             ("TR-20261102193128-1f44a781", "IDA trace · agreement"),
              ("TR-20261102191715-4dabe93d", "IDA trace · disagreement")]
     manifest_path = args.out / "index.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"contract": "agenttrace-explorer-manifest/0.1", "bundles": []}
