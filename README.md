@@ -69,6 +69,7 @@ A capability-by-capability table is in [`docs/STATUS.md`](docs/STATUS.md). The c
 - We turn IDA agent-run records into a simple timeline: who said what, which evidence they named, and how the run ended.
 - The local Explorer shows two reviewed examples: one where agents agree and the run finishes automatically, and one where agents disagree and the run asks for human review.
 - The Explorer checks recorded verification and final decisions. It does not guess whether sensor data proves a diagnosis.
+- Newer IDA 1.1 traces also save full model requests, raw replies, and score changes, so the Explorer can show more of what agents received and how answers changed.
 
 ## Related repositories
 
